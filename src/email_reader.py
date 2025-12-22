@@ -1,0 +1,62 @@
+from imapclient import IMAPClient
+import pyzmail
+from .config import IMAP_HOST, EMAIL_USER, EMAIL_PASS
+from .db import get_last_uid, update_last_uid, emails_col
+
+
+from imapclient import IMAPClient
+import pyzmail
+from .config import IMAP_HOST, EMAIL_USER, EMAIL_PASS
+from .db import get_last_uid, update_last_uid, emails_col
+
+BATCH_SIZE = 10  # max emails per run
+
+def fetch_new_emails():
+    last_uid = get_last_uid()
+    mails = []
+
+    with IMAPClient(IMAP_HOST) as server:
+        server.login(EMAIL_USER, EMAIL_PASS)
+        server.select_folder("INBOX")
+
+        # Fetch only UIDs greater than last processed
+        uids = server.search([u"UID", f"{last_uid + 1}:*"])
+
+        if not uids:
+            return []
+
+        # Ensure deterministic ordering
+        uids = sorted(uids)
+
+        # Limit batch size
+        uids_to_process = uids[:BATCH_SIZE]
+
+        fetch_data = server.fetch(uids_to_process, ["RFC822"])
+
+        for uid in uids_to_process:
+            raw = fetch_data[uid][b"RFC822"]
+            msg = pyzmail.PyzMessage.factory(raw)
+
+            body = ""
+            if msg.text_part:
+                body = msg.text_part.get_payload().decode(
+                    msg.text_part.charset or "utf-8", errors="ignore"
+                )
+
+            mail = {
+                "uid": uid,
+                "subject": msg.get_subject(),
+                "from": msg.get_addresses("from"),
+                "body": body[:5000]
+            }
+
+            emails_col.insert_one(mail)
+            mails.append(mail)
+
+        # Update last_uid ONLY to last processed UID
+        update_last_uid(uids_to_process[-1])
+
+    return mails
+
+
+
