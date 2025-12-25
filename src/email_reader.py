@@ -1,15 +1,12 @@
-from imapclient import IMAPClient
-import pyzmail
-from .config import IMAP_HOST, EMAIL_USER, EMAIL_PASS
-from .db import get_last_uid, update_last_uid, emails_col
-
 
 from imapclient import IMAPClient
 import pyzmail
 from .config import IMAP_HOST, EMAIL_USER, EMAIL_PASS
-from .db import get_last_uid, update_last_uid, emails_col
+from db import get_last_uid, update_last_uid, get_collection
 
 BATCH_SIZE = 10  # max emails per run
+
+emails_col = get_collection("raw_emails")
 
 def fetch_new_emails():
     last_uid = get_last_uid()
