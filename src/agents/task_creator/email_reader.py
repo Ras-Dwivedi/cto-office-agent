@@ -1,12 +1,12 @@
-
 from imapclient import IMAPClient
 import pyzmail
-from .config import IMAP_HOST, EMAIL_USER, EMAIL_PASS
-from db import get_last_uid, update_last_uid, get_collection
+from src.config import IMAP_HOST, EMAIL_USER, EMAIL_PASS
+from src.db import get_last_uid, update_last_uid, get_collection
 
 BATCH_SIZE = 10  # max emails per run
 
 emails_col = get_collection("raw_emails")
+
 
 def fetch_new_emails():
     last_uid = get_last_uid()
@@ -16,17 +16,20 @@ def fetch_new_emails():
         server.login(EMAIL_USER, EMAIL_PASS)
         server.select_folder("INBOX")
 
-        # Fetch only UIDs greater than last processed
-        uids = server.search([u"UID", f"{last_uid + 1}:*"])
+        # Fetch UIDs greater than last processed
+        all_uids = server.search([u"UID", f"{last_uid + 1}:*"])
 
-        if not uids:
-            return []
+        if not all_uids:
+            # No new emails at all
+            return {
+                "emails": [],
+                "exhausted": True
+            }
 
-        # Ensure deterministic ordering
-        uids = sorted(uids)
+        all_uids = sorted(all_uids)
 
-        # Limit batch size
-        uids_to_process = uids[:BATCH_SIZE]
+        # Process only a batch
+        uids_to_process = all_uids[:BATCH_SIZE]
 
         fetch_data = server.fetch(uids_to_process, ["RFC822"])
 
@@ -50,10 +53,12 @@ def fetch_new_emails():
             emails_col.insert_one(mail)
             mails.append(mail)
 
-        # Update last_uid ONLY to last processed UID
+        # Update state ONLY to last processed UID
         update_last_uid(uids_to_process[-1])
 
-    return mails
+        exhausted = len(all_uids) <= BATCH_SIZE
 
-
-
+    return {
+        "emails": mails,
+        "exhausted": exhausted
+    }

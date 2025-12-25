@@ -1,4 +1,6 @@
-from .db import tasks_col
+from src.db import  get_collection
+tasks_col = get_collection("tasks")
+
 
 def get_top_priority_tasks(limit=5):
     cursor = tasks_col.find(
@@ -28,5 +30,8 @@ def get_prirotity_task():
             f"(score={t['priority_score']}, stakeholder={t['stakeholder']})"
         )
 
-if __name__ == "__main__":
+def main():
     get_prirotity_task()
+
+if __name__ == "__main__":
+    main()

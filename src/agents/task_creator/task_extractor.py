@@ -1,48 +1,68 @@
 import requests
 import json
-from config import OLLAMA_URL, OLLAMA_MODEL
-from db import get_collection
 import logging
-logger = logging.getLogger(__name__)
+from datetime import datetime
 
+from src.config import OLLAMA_URL, OLLAMA_MODEL
+from src.db import get_collection
+
+logger = logging.getLogger(__name__)
 
 tasks_col = get_collection("tasks")
 
+
 def store_task(task):
+    """
+    Store a task with required metadata for downstream agents.
+    """
+    now = datetime.utcnow().isoformat()
+
+    task["created_at"] = now
+    task["last_activity_at"] = now
+    task["status"] = "OPEN"
+
     tasks_col.insert_one(task)
 
 
 def extract_tasks(email):
-    prompt = f"""
-I, Ras Dwivedi, is CTO of C3I hub. 
-Owner of the task is one who is responsible to complete it. 
-Stake holder are the people interested in the task. probably from following: 
-    1. Ras Dwivedi
-    2. SOC Team
-    3. Blockchain Team
-    4. VAPT Team
-    5. ISMS Team
-    6. HR Team
-    7. External party
-    8. C3I Hub Internal
-    9. Any other person who is interested in the task
-    
-    if stakeholder is ambiguous: make None as the stakeholder
-    usually stakeholders are people to whom email is sent.
-Extract ACTIONABLE TASKS from this email.
-If none exist, return EMPTY.
+    """
+    Extract actionable tasks from an email using Ollama.
+    This function is responsible ONLY for clean task extraction
+    and metadata enrichment — NOT prioritization.
+    """
 
-Return STRICT JSON array:
+    prompt = f"""
+You are assisting Ras Dwivedi, CTO of C3I Hub.
+
+Owner:
+- Person or team responsible for completing the task.
+
+
+Institutional task:
+- true if the task:
+  - creates or improves SOPs, policies, workflows, governance
+  - reduces repeated manual decisions
+  - has long-term organizational impact
+- false otherwise
+
+Examples:
+- "Define SOC alert resolution SOP" → institutional = true
+- "Share meeting link" → institutional = false
+
+Extract ACTIONABLE TASKS from the email below.
+If no actionable task exists, return EMPTY.
+
+Return STRICT JSON array only:
 [
- {{
-  "title": "...",
-  "owner": "...",
-  "stakeholder": "...",
-  "due_by": "YYYY-MM-DD or null",
-  "blocks_others": true/false,
-  "external_dependency": true/false,
-  "delegatable": true/false
- }}
+  {{
+    "title": "...",
+    "owner": "...",
+    "due_by": "YYYY-MM-DD or null",
+    "institutional": true/false,
+    "blocks_others": true/false,
+    "external_dependency": true/false,
+    "delegatable": true/false
+  }}
 ]
 
 Email:
@@ -51,25 +71,57 @@ Body:
 {email['body']}
 """
 
-    r = requests.post(
-        OLLAMA_URL,
-        json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False}
-    )
+    try:
+        response = requests.post(
+            OLLAMA_URL,
+            json={
+                "model": OLLAMA_MODEL,
+                "prompt": prompt,
+                "stream": False
+            },
+            timeout=60
+        )
+    except Exception as e:
+        logger.error("Failed to call Ollama API", exc_info=True)
+        raise RuntimeError(str(e))
+
+    if response.status_code != 200:
+        logger.error("Ollama HTTP error: %s", response.text)
+        raise RuntimeError(response.text)
 
     try:
-        data = r.json()
-    except Exception as e:
-        logger.error(f"Failed to extract tasks: {e}")
-        raise RuntimeError(f"Ollama returned non-JSON response: {r.text}")
+        data = response.json()
+    except Exception:
+        logger.error("Ollama returned non-JSON response: %s", response.text)
+        raise RuntimeError("Invalid Ollama response")
 
-    # print("🔍 Ollama raw response:", data)
+    # ---- Robust response parsing ----
+    if "error" in data:
+        logger.error("Ollama error: %s", data["error"])
+        raise RuntimeError(data["error"])
 
-    if "response" not in data:
-        raise RuntimeError(f"Ollama response missing 'response' key: {data}")
+    if "response" in data:
+        text = data["response"]
+    elif "message" in data and "content" in data["message"]:
+        text = data["message"]["content"]
+    else:
+        logger.error("Unexpected Ollama response format: %s", data)
+        raise RuntimeError("Unexpected Ollama response format")
 
-    text = data["response"]
-
-    if "EMPTY" in text:
+    if not text or "EMPTY" in text:
         return []
 
-    return json.loads(text)
+    try:
+        tasks = json.loads(text)
+    except Exception:
+        logger.error("Failed to parse task JSON from LLM output:\n%s", text)
+        raise RuntimeError("Invalid task JSON")
+
+    # ---- Store tasks with metadata ----
+    for task in tasks:
+        store_task(task)
+
+    logger.info("Extracted and stored %d task(s) from email UID=%s",
+                len(tasks), email.get("uid"))
+
+    return tasks
