@@ -1,49 +1,62 @@
 #!/usr/bin/env python3
+
+import argparse
 import sys
+
 from src.commands.commands import COMMAND_ROUTES
 
-def print_global_help():
-    print("\nAvailable commands:\n")
-    for name, meta in COMMAND_ROUTES.items():
-        print(f"  {name:<20} {meta.get('help', '')}")
-    print("\nUse `workctl help <command>` for details.\n")
-
-def print_command_help(command):
-    meta = COMMAND_ROUTES.get(command)
-    if not meta:
-        print(f"\n❌ Unknown command: {command}\n")
-        print_global_help()
-        return
-
-    print(f"\nCommand: {command}\n")
-    print(meta.get("help", "No help available"))
-    print("\nUsage:")
-    print(f"  workctl {command} [options]\n")
 
 def main():
-    if len(sys.argv) < 2:
-        print_global_help()
-        sys.exit(0)
+    parser = argparse.ArgumentParser(
+        prog="workctl",
+        description="CTO Office Control Tool"
+    )
 
-    command = sys.argv[1]
-    args = sys.argv[2:]
+    # ---- SHORTCUT FLAGS ----
+    parser.add_argument(
+        "-p", "--pomodoro",
+        action="store_true",
+        help="Start a Pomodoro session"
+    )
 
-    # Handle help explicitly
-    if command == "help":
-        if args:
-            print_command_help(args[0])
-        else:
-            print_global_help()
-        sys.exit(0)
+    parser.add_argument(
+        "-t", "--priority",
+        action="store_true",
+        help="Show top priority tasks"
+    )
 
-    if command not in COMMAND_ROUTES:
-        print(f"\n❌ Unknown command: {command}")
-        print_global_help()
+    # ---- COMMAND ----
+    parser.add_argument(
+        "command",
+        nargs="?",
+        help="Command to run"
+    )
+
+    args = parser.parse_args()
+
+    # ---- SHORTCUT RESOLUTION ----
+    if args.pomodoro:
+        COMMAND_ROUTES["pomodoro"]["handler"]()
+        return
+
+    if args.priority:
+        COMMAND_ROUTES["priority"]["handler"]()
+        return
+
+    # ---- NORMAL COMMAND FLOW ----
+    if not args.command:
+        parser.print_help()
+        return
+
+    if args.command not in COMMAND_ROUTES:
+        print(f"Unknown command: {args.command}")
+        print("Available commands:")
+        for cmd, meta in COMMAND_ROUTES.items():
+            print(f"  {cmd:15} {meta['help']}")
         sys.exit(1)
 
-    # Forward remaining args
-    sys.argv = [command] + args
-    COMMAND_ROUTES[command]["handler"]()
+    COMMAND_ROUTES[args.command]["handler"]()
+
 
 if __name__ == "__main__":
     main()

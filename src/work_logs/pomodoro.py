@@ -1,11 +1,10 @@
 import time
-from datetime import datetime
+from datetime import datetime, date
 from src.db import get_collection
-
-POMODORO_MINUTES = 25
+from src.config import POMODORO_MINUTES
 
 def main():
-    tasks_col = get_collection("tasks")
+    tasks_col = get_collection("completed_tasks")
 
     print("\n🍅 Pomodoro Session Started\n")
 
@@ -19,16 +18,26 @@ def main():
     print("Press Ctrl+C to abort\n")
 
     try:
-        time.sleep(POMODORO_MINUTES * 60)
+        time.sleep(POMODORO_MINUTES*60)
+        finished_naturally = True
     except KeyboardInterrupt:
-        print("\n⛔ Pomodoro aborted")
-        return
+        finished_naturally = False
+        print("\n⏹ Pomodoro interrupted")
+
+        finish_now = input(
+            "Did you finish the task early? (Y/N): "
+        ).strip().lower()
+
+        if finish_now != "y":
+            print("❌ Pomodoro cancelled. Nothing recorded.")
+            return
+
 
     end_time = datetime.now()
 
     print("\n⏰ Time's up!")
 
-    completed = input("Is the task completed? (Y/N): ").strip().lower()
+    completed = input("Is the task completed? (Y/N): ").strip().lower().startswith("y")
 
     task_doc = {
         "task_name": task_name,
@@ -40,10 +49,17 @@ def main():
         "source": "work_logs",
         "created_at": datetime.now()
     }
+    if not completed:
+        next_review = input("Next review date (YYYY-MM-DD, optional): ").strip()
+        if next_review:
+            try:
+                task_doc["next_review_date"] = date.fromisoformat(next_review)
+            except ValueError:
+                print("⚠️ Invalid date format. Review date not stored.")
+                task_doc["next_review_date"] = None
+        else:
+            task_doc["next_review_date"] = None
 
-    if completed != "y":
-        next_review = input("Next review date (YYYY-MM-DD): ").strip()
-        task_doc["next_review_date"] = next_review
     else:
         task_doc["next_review_date"] = None
 
@@ -51,6 +67,7 @@ def main():
 
     status = "✅ Completed" if task_doc["completed"] else "⏭ Deferred"
     print(f"\n{status}: '{task_name}' recorded in MongoDB")
+
 
 if __name__ == "__main__":
     main()
