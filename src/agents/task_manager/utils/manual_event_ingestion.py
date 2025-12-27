@@ -5,12 +5,14 @@ from src.agents.task_manager.utils.cf_engine import process_event
 from src.db import get_collection
 
 
-def main():
-    print("\n📱 Manual Event Ingestion (WhatsApp / Call)\n")
+def main(source=None):
+    print("\n📱 Manual Event Ingestion (Interrupt-driven work)\n")
 
-    event_type = input("Event type (whatsapp / call): ").strip().lower()
-    if event_type not in {"whatsapp", "call"}:
-        print("❌ Invalid event type")
+    if source not in {"whatsapp", "call"}:
+        source = input("Source (whatsapp / call): ").strip().lower()
+
+    if source not in {"whatsapp", "call"}:
+        print("❌ Invalid source")
         return
 
     text = input("Event summary (one line): ").strip()
@@ -19,19 +21,26 @@ def main():
         return
 
     now = datetime.utcnow()
-    event_id = f"{event_type.upper()}-{uuid.uuid4().hex[:8]}"
 
-    # Optional: store raw event (recommended)
+    # 🔑 Unified event type
+    event_type = "interrupt"
+    event_id = f"INT-{uuid.uuid4().hex[:8]}"
+
+    # ----------------------------------------
+    # Store raw interrupt event (fact)
+    # ----------------------------------------
     events_col = get_collection("raw_events")
     events_col.insert_one({
         "event_id": event_id,
-        "event_type": event_type,
+        "event_type": event_type,   # unified
+        "source": source,           # whatsapp | call
         "text": text,
-        "timestamp": now,
-        "source": "manual"
+        "timestamp": now
     })
 
+    # ----------------------------------------
     # Send to CF engine
+    # ----------------------------------------
     process_event(
         event_id=event_id,
         event_type=event_type,
@@ -39,7 +48,8 @@ def main():
         now=now
     )
 
-    print("\n✅ Event recorded and context inferred")
+    print("\n✅ Interrupt event recorded and context inferred")
+    print(f"📌 Source: {source}")
 
 
 if __name__ == "__main__":

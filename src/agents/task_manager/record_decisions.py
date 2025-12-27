@@ -3,13 +3,15 @@ import hashlib
 from datetime import datetime
 
 from src.db import get_collection
+from src.agents.task_manager.utils.cf_engine import process_event
+
 
 # ---------------- Collections ----------------
 
 decisions_col = get_collection("decisions")
 
+
 # ---------------- Config ----------------
-# QUICK decisions ALSO capture context (important for institutional memory)
 
 QUICK_FIELDS = [
     "Decision",
@@ -27,6 +29,7 @@ LONG_FIELDS = [
     "What I Learned"
 ]
 
+
 # ---------------- Helpers ----------------
 
 def prompt(field):
@@ -40,8 +43,9 @@ def normalize(key):
 
 def context_fingerprint(*parts):
     """
-    Generate a deterministic fingerprint from decision context.
-    Used to detect repeated / similar decisions later.
+    Decision-local fingerprint.
+    Used only for deduplication / later analysis,
+    NOT for system-wide context inference.
     """
     text = "||".join(
         p.strip().lower()
@@ -64,7 +68,7 @@ def main():
     mode = "LONG" if long_mode else "QUICK"
 
     now = datetime.utcnow()
-    decision_id = now.isoformat(timespec="minutes")
+    decision_id = f"DEC-{now.isoformat(timespec='seconds')}"
 
     print(f"\n📝 Recording {mode} decision\n")
 
@@ -84,18 +88,20 @@ def main():
         "review_date": None,
         "what_i_learned": None,
 
-        # Derived
+        # Local-only derived
         "context_fingerprint": None
     }
 
+    # -------------------------
     # Collect user input
+    # -------------------------
     for field in fields:
         value = prompt(field)
         if value:
             doc[normalize(field)] = value
 
     # -------------------------
-    # Context fingerprint
+    # Local context fingerprint
     # -------------------------
     doc["context_fingerprint"] = context_fingerprint(
         doc.get("decision"),
@@ -103,12 +109,35 @@ def main():
         doc.get("assumptions")
     )
 
-    # Persist
+    # -------------------------
+    # Persist decision (immutable fact)
+    # -------------------------
     decisions_col.insert_one(doc)
 
+    # -------------------------
+    # Emit DECISION event to CF engine
+    # -------------------------
+    process_event(
+        event_id=decision_id,
+        event_type="decision",
+        event_text=" ".join(
+            filter(None, [
+                doc.get("decision"),
+                doc.get("context")
+            ])
+        ),
+        now=now
+    )
+
+    # -------------------------
+    # Output
+    # -------------------------
     print("\n✅ Decision stored in MongoDB")
+
     if doc["context_fingerprint"]:
-        print(f"🔑 Context fingerprint: {doc['context_fingerprint']}")
+        print(f"🔑 Local context fingerprint: {doc['context_fingerprint']}")
+
+    print("🧠 Context inference delegated to CF engine")
 
 
 if __name__ == "__main__":

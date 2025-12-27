@@ -1,13 +1,15 @@
 import time
 import sys
-
+import uuid
 from datetime import datetime
+
 from src.db import get_collection
 from src.config.config import POMODORO_MINUTES
 
-from src.agents.task_manager.utils.context_fingerprint import find_or_create_cf
+from src.agents.task_manager.utils.cf_engine import process_event
 from src.agents.task_manager.utils.task_engine import update_task_from_pomodoro
 from src.agents.task_manager.utils.pomodoro_recorder import record_pomodoro
+
 
 def countdown(minutes: int):
     total_seconds = minutes * 60
@@ -24,7 +26,6 @@ def countdown(minutes: int):
 
 def main():
     tasks_col = get_collection("tasks")
-    contexts_col = get_collection("contexts")
     pomodoros_col = get_collection("pomodoros")
 
     print("\n🍅 Pomodoro Session Started\n")
@@ -36,11 +37,8 @@ def main():
 
     start_time = datetime.now()
 
-    # 🔹 Context inference
-    cf = find_or_create_cf(task_text, contexts_col, start_time)
-
     print(f"\n⏳ Working on '{task_text}' for {POMODORO_MINUTES} minutes")
-    print(f"🧠 Context: {cf['title']}")
+    print("🧠 Context will be inferred automatically")
     print("Press Ctrl+C to abort\n")
 
     try:
@@ -51,33 +49,36 @@ def main():
 
     end_time = datetime.now()
 
-    # 🔹 Record pomodoro
+    # -------------------------------------------------
+    # Create Pomodoro Event (immutable fact)
+    # -------------------------------------------------
+    pomodoro_event_id = f"POMO-{uuid.uuid4().hex[:8]}"
+
     record_pomodoro(
-        pomodoros_col,
-        cf["cf_id"],
-        task_text,
-        start_time,
-        end_time,
-        POMODORO_MINUTES
+        pomodoros_col=pomodoros_col,
+        event_id=pomodoro_event_id,
+        task_text=task_text,
+        start_time=start_time,
+        end_time=end_time,
+        duration_minutes=POMODORO_MINUTES
     )
 
-    # 🔹 Update context
-    contexts_col.update_one(
-        {"cf_id": cf["cf_id"]},
-        {
-            "$set": {"last_activity": end_time},
-            "$inc": {
-                "total_pomodoros": 1,
-                "total_time_minutes": POMODORO_MINUTES
-            }
-        }
+    # -------------------------------------------------
+    # Centralized CF Processing (DB owned by CF engine)
+    # -------------------------------------------------
+    cf_hypotheses = process_event(
+        event_id=pomodoro_event_id,
+        event_type="pomodoro",
+        event_text=task_text,
+        now=end_time
     )
 
-    # 🔹 Update task state
+    # -------------------------------------------------
+    # Update task state (CF-agnostic)
+    # -------------------------------------------------
     status, desc = update_task_from_pomodoro(
-        tasks_col,
-        cf["cf_id"],
-        task_text
+        tasks_col=tasks_col,
+        task_text=task_text
     )
 
     if status == "completed":
@@ -88,6 +89,9 @@ def main():
         print(f"\n🆕 New task inferred: {desc}")
 
     print("\n🍅 Pomodoro recorded successfully")
+    print("🔗 Context links inferred:")
+    for h in cf_hypotheses:
+        print(f"  - {h['cf_id']} (confidence={h['confidence']})")
 
 
 if __name__ == "__main__":

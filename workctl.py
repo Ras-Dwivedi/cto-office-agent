@@ -25,6 +25,19 @@ def main():
         help="Show top priority tasks"
     )
 
+    # 🔹 NEW: interrupt shortcuts
+    parser.add_argument(
+        "-c", "--call",
+        action="store_true",
+        help="Log a phone call as an interrupt event"
+    )
+
+    parser.add_argument(
+        "-w", "--whatsapp",
+        action="store_true",
+        help="Log a WhatsApp message as an interrupt event"
+    )
+
     # ---- COMMAND ----
     parser.add_argument(
         "command",
@@ -41,6 +54,15 @@ def main():
 
     if args.priority:
         COMMAND_ROUTES["priority"]["handler"]()
+        return
+
+    # 🔹 NEW: interrupt shortcut resolution
+    if args.call:
+        COMMAND_ROUTES["call"]["handler"]()
+        return
+
+    if args.whatsapp:
+        COMMAND_ROUTES["wa"]["handler"]()
         return
 
     # ---- NORMAL COMMAND FLOW ----

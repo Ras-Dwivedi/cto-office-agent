@@ -1,36 +1,23 @@
 from src.db import get_collection
 
-def main(dry_run=True):
-    tasks_col = get_collection("tasks")
+
+def main():
+    edges_col = get_collection("event_cf_edges")
 
     query = {
-        "$or": [
-            {"task_id": {"$exists": False}},
-            {"task_id": None},
-            {"task_id": ""}
-        ]
+        "event_id": "TASK-None"
     }
 
-    count = tasks_col.count_documents(query)
-
-    print(f"🧹 Found {count} task(s) without task_id")
+    count = edges_col.count_documents(query)
+    print(f"🧹 Found {count} edge(s) with event_id = 'TASK-None'")
 
     if count == 0:
-        print("✅ Nothing to clean up")
+        print("✅ Nothing to delete")
         return
 
-    if dry_run:
-        print("⚠️ DRY RUN enabled — no documents deleted")
-        print("   Run with dry_run=False to actually delete")
-        return
+    result = edges_col.delete_many(query)
+    print(f"🔥 Deleted {result.deleted_count} edge(s)")
 
-    result = tasks_col.delete_many(query)
-
-    print(f"🔥 Deleted {result.deleted_count} task(s)")
 
 if __name__ == "__main__":
-    # 🔒 First run with dry_run=True (default)
-    main(dry_run=True)
-
-    # After verifying output, uncomment the line below
-    # main(dry_run=False)
+    main()

@@ -1,13 +1,16 @@
 import time
 import logging
+import uuid
+from datetime import datetime
 
 from src.agents.task_manager.email_reader import fetch_new_emails
 from src.agents.task_manager.task_extractor import extract_tasks
 from src.agents.task_manager.task_store import store_task
+from src.agents.task_manager.utils.cf_engine import process_event
 from src.config.config import EMAIL_POLL_SECONDS
 
 
-# ---------- LOGGING SETUP (ENFORCED) ----------
+# ---------- LOGGING SETUP ----------
 def setup_logging():
     logging.basicConfig(
         level=logging.INFO,
@@ -16,7 +19,7 @@ def setup_logging():
 
 
 setup_logging()
-logger = logging.getLogger("agent.task_manager.agent1")
+logger = logging.getLogger("agent.task_manager.email_ingestor")
 
 
 # ---------- SLEEP CONSTANTS ----------
@@ -26,7 +29,7 @@ SHORT_SLEEP = EMAIL_POLL_SECONDS
 
 # ---------- AGENT LOOP ----------
 def run_agent():
-    logger.info("📥 Agent-1 started (incremental email ingestion)")
+    logger.info("📥 Email Task Agent started (CF-aware)")
 
     while True:
         try:
@@ -59,24 +62,42 @@ def run_agent():
                 )
                 continue
 
-            if tasks:
-                try:
-                    store_task(tasks)
-                    logger.info(
-                        "📝 Stored %d task(s) from email UID=%s",
-                        len(tasks),
-                        uid
-                    )
-                except Exception:
-                    logger.exception(
-                        "❌ Failed to store tasks from email UID=%s",
-                        uid
-                    )
-            else:
+            if not tasks:
                 logger.info(
                     "No actionable tasks found for email UID=%s",
                     uid
                 )
+                continue
+
+            for task in tasks:
+                try:
+                    # ----------------------------------------
+                    # Store task (existing behavior)
+                    # ----------------------------------------
+                    task_id = store_task(task)
+
+                    logger.info(
+                        "📝 Stored task '%s' (task_id=%s) from email UID=%s",
+                        task.get("title"),
+                        task_id,
+                        uid
+                    )
+
+                    # ----------------------------------------
+                    # Emit TASK event to CF engine
+                    # ----------------------------------------
+                    process_event(
+                        event_id=f"TASK-{task_id}",
+                        event_type="task",
+                        event_text=task.get("title", ""),
+                        now=datetime.utcnow()
+                    )
+
+                except Exception:
+                    logger.exception(
+                        "❌ Failed to process task from email UID=%s",
+                        uid
+                    )
 
         if exhausted:
             logger.info("📭 Inbox fully processed. Sleeping for 2 hours.")
