@@ -1,0 +1,16 @@
+projects:
+  OT-SOC:
+    name: OT SOC Deployment
+    description: SOC design, deployment, and operations for OT environments
+
+  BLOCKCHAIN-HIRING:
+    name: Blockchain Team Hiring
+    description: Hiring and onboarding for blockchain team
+
+  DPDP-COMPLIANCE:
+    name: DPDP Act Compliance
+    description: Data protection compliance initiatives
+
+  VAPT-EXPANSION:
+    name: VAPT Capability Expansion
+    description: Scaling VAPT tools, people, and processes

@@ -1,0 +1,8 @@
+verbs:
+  - dev          # development / engineering
+  - ops          # operations / execution
+  - governance   # policy / SOP / institutional
+  - business     # partnerships / funding / clients
+  - research     # academic / exploratory
+  - hiring       # recruitment
+  - admin        # logistics / admin

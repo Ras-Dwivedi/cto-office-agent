@@ -1,0 +1,243 @@
+🎛️ workctl Shortcut Design Principles
+
+Before the map, these are the rules we follow (important):
+
+Single-letter flags are for frequent actions
+
+Letters should be mnemonic
+
+No collisions
+
+Shortcuts never replace canonical commands
+
+Flags = actions, Commands = nouns
+
+This keeps the CLI intuitive under stress.
+
+🧭 Core Shortcut Map (Recommended)
+🔥 Daily-use shortcuts (muscle memory)
+Shortcut	Command	Meaning	Why this letter
+-p	pomodoro	Focus session	Pomodoro
+-t	priority	Top priority tasks	Top tasks
+-f	follow-ups (future)	What am I waiting on	Follow-up
+-n	next (future)	What should I do next	Next action
+
+These should become reflexes.
+
+🧠 Thinking & reflection shortcuts
+Shortcut	Command	Meaning
+-d	record-decision	Log a decision
+-m	generate-markdown	Generate report / summary
+
+Mnemonic:
+
+Decide
+
+Markdown / Memo
+
+🤖 Automation & agents
+Shortcut	Command	Meaning
+-a	create-tasks	Run email → task agent
+-r	run-agents (future)	Run all background agents
+
+Use these sparingly — agents shouldn’t need frequent manual triggers.
+
+🛠️ Meta / system shortcuts
+Shortcut	Command	Meaning
+-s	status (future)	System health
+-h	help	Help (standard)
+-v	version (future)	Version info
+✅ Canonical Commands (Never removed)
+
+Shortcuts are aliases, not replacements.
+
+These should always work:
+
+workctl pomodoro
+workctl priority
+workctl create-tasks
+workctl record-decision
+
+🧩 Visual Summary (Mental Model)
+Focus        → -p
+Decide       → -d
+Act next     → -n
+Check tasks  → -t
+Follow up   → -f
+Automate    → -a
+Reflect     → -m
+
+
+This maps nicely to how a CTO’s day flows.
+
+🧱 Implementation Pattern (for workctl)
+
+This is how your shortcuts should resolve internally:
+
+SHORTCUTS = {
+    "-p": "pomodoro",
+    "-t": "priority",
+    "-d": "record-decision",
+    "-m": "generate-markdown",
+    "-a": "create-tasks",
+}
+
+
+All shortcuts → canonical commands → handlers in COMMAND_ROUTES.
+
+No duplication. No branching logic everywhere.
+
+🚫 Shortcuts to avoid (important)
+Shortcut	Why avoid
+-c	Ambiguous (create / close / config)
+-l	Conflicts with common shell patterns
+-x	Too generic
+-1, -2	Non-mnemonic
+🧠 Why this works long-term
+
+You’ll remember it under pressure
+
+New commands slot in naturally
+
+Other people can learn it in 2 minutes
+
+It mirrors tools like git, kubectl, terraform
+
+This is tool ergonomics, not aesthetics.
+
+🏁 Recommended final set (freeze this)
+
+If you want a minimal but powerful starting set, freeze this:
+
+-p  → pomodoro
+-t  → priority
+-d  → record-decision
+-m  → generate-markdown
+-a  → create-tasks
+
+
+Everything else can come later.
+
+Want me to do the next step?
+
+I can:
+
+implement this shortcut map directly in your workctl
+
+add workctl help grouped by category
+
+add shell autocomplete (zsh/bash)
+
+design a TUI for priorities + pomodoro
+
+Just tell me which one.
+
+give the markdown of this shortcut map to store in repository
+
+Here is a clean, repository-ready Markdown file you can drop directly into your repo (e.g. docs/SHORTCUTS.md or README.md section).
+
+It’s written to be:
+
+concise
+
+scannable
+
+future-proof
+
+understandable by someone new to workctl
+
+workctl Shortcut Map
+
+This document defines the official shortcut map for the workctl command-line tool.
+
+Shortcuts are designed for high-frequency actions, while canonical commands remain the primary interface.
+
+Design Principles
+
+Shortcuts are mnemonic (easy to remember)
+
+Shortcuts are optional — canonical commands always work
+
+One shortcut = one action
+
+No collisions
+
+Flags express actions, commands express nouns
+
+Core Daily Shortcuts
+
+These are intended to become muscle memory.
+
+Shortcut	Canonical Command	Description
+-p	pomodoro	Start a 25-minute Pomodoro focus session
+-t	priority	Show top priority tasks
+-f	follow-ups (planned)	Show pending follow-ups
+-n	next (planned)	Show next best action
+Thinking & Reflection
+
+Used for deliberate thinking, review, and documentation.
+
+Shortcut	Canonical Command	Description
+-d	record-decision	Record a decision
+-m	generate-markdown	Generate Markdown report from work logs
+Automation & Agents
+
+Used to manually trigger background automation.
+
+Shortcut	Canonical Command	Description
+-a	create-tasks	Run email → task creation agent
+-r	run-agents (planned)	Run all background agents
+System & Meta
+Shortcut	Canonical Command	Description
+-s	status (planned)	Show system health
+-h	help	Show help
+-v	version (planned)	Show version information
+Canonical Commands (Always Supported)
+
+Shortcuts are aliases only.
+The following commands must always work:
+
+workctl pomodoro
+workctl priority
+workctl create-tasks
+workctl record-decision
+workctl generate-markdown
+
+Mental Model
+-p  Focus (Pomodoro)
+-t  Top tasks
+-d  Decide
+-m  Reflect
+-a  Automate
+
+Implementation Notes
+
+Shortcuts are resolved in workctl
+
+Canonical commands are defined in src/cli/commands.py
+
+Business logic must not depend on shortcuts
+
+Extending the Shortcut Map
+
+When adding new shortcuts:
+
+Ensure the action is high-frequency
+
+Choose a mnemonic letter
+
+Avoid collisions
+
+Update this document
+
+Status
+
+This document represents the authoritative shortcut specification for workctl.
+
+If you want, next I can:
+
+auto-generate this into workctl help
+
+enforce shortcut consistency in code
+
+add shell auto-completion using this spec

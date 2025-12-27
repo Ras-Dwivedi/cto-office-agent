@@ -1,10 +1,10 @@
 import time
 import logging
 
-from src.agents.task_creator.email_reader import fetch_new_emails
-from src.agents.task_creator.task_extractor import extract_tasks
-from src.agents.task_creator.task_store import store_task
-from src.config import EMAIL_POLL_SECONDS
+from src.agents.task_manager.email_reader import fetch_new_emails
+from src.agents.task_manager.task_extractor import extract_tasks
+from src.agents.task_manager.task_store import store_task
+from src.config.config import EMAIL_POLL_SECONDS
 
 
 # ---------- LOGGING SETUP (ENFORCED) ----------
@@ -16,7 +16,7 @@ def setup_logging():
 
 
 setup_logging()
-logger = logging.getLogger("agent.task_creator.agent1")
+logger = logging.getLogger("agent.task_manager.agent1")
 
 
 # ---------- SLEEP CONSTANTS ----------

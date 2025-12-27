@@ -1,6 +1,6 @@
 from imapclient import IMAPClient
 import pyzmail
-from src.config import IMAP_HOST, EMAIL_USER, EMAIL_PASS
+from src.config.config import IMAP_HOST, EMAIL_USER, EMAIL_PASS
 from src.db import get_last_uid, update_last_uid, get_collection
 
 BATCH_SIZE = 10  # max emails per run

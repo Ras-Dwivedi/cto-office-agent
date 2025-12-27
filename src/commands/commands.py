@@ -1,10 +1,12 @@
 # src/cli/commands.py
 
-from src.work_logs.record_decisions import main as record_decision
-from src.work_logs.generate_markdown import main as generate_markdown
-from src.work_logs.pomodoro import main as pomodoro
-from src.agents.task_creator.agent1 import main as email_task_creator
-from src.agents.task_creator.priority_view import main as show_priority_tasks
+from src.agents.task_manager.record_decisions import main as record_decision
+from src.agents.task_manager.generate_markdown import main as generate_markdown
+from src.agents.task_manager.pomodoro import main as pomodoro
+from src.agents.task_manager.agent import main as email_task_creator
+from src.agents.task_manager.priority_view import get_priority_task
+from src.agents.judgement.morning_brief import morning_judgement_brief
+from src.cli.open_email import open_email
 
 COMMAND_ROUTES = {
     #========= WORK LOGS ======
@@ -29,6 +31,19 @@ COMMAND_ROUTES = {
 
     # ---------------- Priority view ----------------
     "priority": {
-        "handler": show_priority_tasks,
+        "handler": get_priority_task,
         "help": "Show top 5 highest priority tasks"
-    },}
+    },
+
+    # ------ Morning brief ----------------
+    "morning": {
+        "handler": morning_judgement_brief,
+        "help": "Show morning judgment brief (delegate vs personal focus)"
+    },
+    "open": {
+        "handler": lambda task_id=None: open_email(task_id),
+        "help": "Open the full email associated with a task_id"
+    },
+
+
+}

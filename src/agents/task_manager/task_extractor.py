@@ -3,8 +3,12 @@ import json
 import logging
 from datetime import datetime
 
-from src.config import OLLAMA_URL, OLLAMA_MODEL
+from src.config.config import OLLAMA_URL, OLLAMA_MODEL
 from src.db import get_collection
+
+from src.agents.task_manager.utils.project_resolver import resolve_project_id
+from src.agents.task_manager.utils.task_id import generate_task_id
+from src.agents.task_manager.utils.verb_resolver import resolve_task_verb  # you should have / add this
 
 logger = logging.getLogger(__name__)
 
@@ -14,12 +18,13 @@ tasks_col = get_collection("tasks")
 def store_task(task):
     """
     Store a task with required metadata for downstream agents.
+    NOTE: This assumes idempotency / upsert may be added later.
     """
     now = datetime.utcnow().isoformat()
 
-    task["created_at"] = now
+    task.setdefault("created_at", now)
     task["last_activity_at"] = now
-    task["status"] = "OPEN"
+    task.setdefault("status", "OPEN")
 
     tasks_col.insert_one(task)
 
@@ -27,8 +32,11 @@ def store_task(task):
 def extract_tasks(email):
     """
     Extract actionable tasks from an email using Ollama.
-    This function is responsible ONLY for clean task extraction
-    and metadata enrichment — NOT prioritization.
+
+    Responsibilities:
+    - Call LLM for task extraction ONLY
+    - Enrich tasks with deterministic metadata
+    - Store tasks
     """
 
     prompt = f"""
@@ -36,7 +44,6 @@ You are assisting Ras Dwivedi, CTO of C3I Hub.
 
 Owner:
 - Person or team responsible for completing the task.
-
 
 Institutional task:
 - true if the task:
@@ -71,6 +78,7 @@ Body:
 {email['body']}
 """
 
+    # ---------------- LLM call ----------------
     try:
         response = requests.post(
             OLLAMA_URL,
@@ -81,9 +89,9 @@ Body:
             },
             timeout=60
         )
-    except Exception as e:
-        logger.error("Failed to call Ollama API", exc_info=True)
-        raise RuntimeError(str(e))
+    except Exception:
+        logger.exception("Failed to call Ollama API")
+        raise RuntimeError("Ollama API call failed")
 
     if response.status_code != 200:
         logger.error("Ollama HTTP error: %s", response.text)
@@ -95,7 +103,7 @@ Body:
         logger.error("Ollama returned non-JSON response: %s", response.text)
         raise RuntimeError("Invalid Ollama response")
 
-    # ---- Robust response parsing ----
+    # ---------------- Response parsing ----------------
     if "error" in data:
         logger.error("Ollama error: %s", data["error"])
         raise RuntimeError(data["error"])
@@ -117,11 +125,33 @@ Body:
         logger.error("Failed to parse task JSON from LLM output:\n%s", text)
         raise RuntimeError("Invalid task JSON")
 
-    # ---- Store tasks with metadata ----
+    # ---------------- Enrich + store tasks ----------------
     for task in tasks:
+        # ---- Email provenance (SOURCE OF TRUTH) ----
+        task["email_uid"] = email.get("uid")
+        task["email_subject"] = email.get("subject")
+        task["email_from"] = email.get("from")
+        task["source"] = "email"
+
+        # ---- Project resolution (deterministic) ----
+        task["project_id"] = resolve_project_id(task)
+
+        # ---- Verb resolution (deterministic) ----
+        task["task_verb"] = resolve_task_verb(task)
+
+        # ---- Deterministic task identity ----
+        task["task_id"] = generate_task_id(
+            project_id=task["project_id"],
+            verb=task["task_verb"],
+            title=task["title"]
+        )
+
         store_task(task)
 
-    logger.info("Extracted and stored %d task(s) from email UID=%s",
-                len(tasks), email.get("uid"))
+    logger.info(
+        "Extracted and stored %d task(s) from email UID=%s",
+        len(tasks),
+        email.get("uid")
+    )
 
     return tasks
