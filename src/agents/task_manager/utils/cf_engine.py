@@ -1,6 +1,6 @@
 import uuid
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict
 
 from src.db import get_collection
@@ -11,7 +11,6 @@ from src.db import get_collection
 
 logger = logging.getLogger("cf_engine")
 
-
 # =========================================================
 # Configuration
 # =========================================================
@@ -20,7 +19,6 @@ CF_LOOKBACK_DAYS = 7
 MAX_CF_CANDIDATES = 3
 CF_CREATION_THRESHOLD = 0.35
 
-
 # =========================================================
 # DB Collections (owned here)
 # =========================================================
@@ -28,12 +26,12 @@ CF_CREATION_THRESHOLD = 0.35
 contexts_col = get_collection("context_fingerprints")
 edges_col = get_collection("event_cf_edges")
 
-
 # =========================================================
 # Facet Heuristics (WEAK, SOFT, REVERSIBLE)
 # =========================================================
 
 FACET_HINTS = {
+    # ---------- Work identity ----------
     "nature": {
         "governance": ["policy", "approval", "review", "escalation"],
         "execution": ["implement", "deploy", "fix", "configure"],
@@ -64,12 +62,34 @@ FACET_HINTS = {
         "decision": ["decide", "approve", "finalize"],
         "analysis": ["analyze", "investigate", "review"],
         "coordination": ["follow up", "meeting", "sync", "call"],
+    },
+
+    # ---------- Human load / wellbeing (NON-ID) ----------
+    "load": {
+        "urgent": ["urgent", "asap", "immediately", "critical", "escalation"],
+        "interruptive": ["call", "ping", "follow up", "meeting", "whatsapp"],
+        "overload": ["pending", "delay", "backlog", "many", "multiple"],
+        "emotional": ["frustrated", "concerned", "worried", "pressure"]
     }
 }
 
+# =========================================================
+# Time Safety Utilities (CRITICAL)
+# =========================================================
+
+def _to_utc_aware(dt: datetime | None) -> datetime | None:
+    """
+    Normalize datetime to timezone-aware UTC.
+    Safely handles legacy naive datetimes.
+    """
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 # =========================================================
-# Utilities
+# Text / Facet Utilities
 # =========================================================
 
 def semantic_similarity(a: str, b: str) -> float:
@@ -81,7 +101,6 @@ def semantic_similarity(a: str, b: str) -> float:
         return 0.0
     return len(a_tokens & b_tokens) / len(a_tokens | b_tokens)
 
-
 def cf_confidence(s_text: float, s_time: float, s_facet: float) -> float:
     return round(
         (0.5 * s_text) +
@@ -89,7 +108,6 @@ def cf_confidence(s_text: float, s_time: float, s_facet: float) -> float:
         (0.2 * s_facet),
         4
     )
-
 
 def extract_event_facets(event_text: str) -> Dict[str, Dict[str, float]]:
     text = (event_text or "").lower()
@@ -103,7 +121,6 @@ def extract_event_facets(event_text: str) -> Dict[str, Dict[str, float]]:
                 facets[facet][key] = score
 
     return facets
-
 
 def facet_similarity(event_facets, cf_facets) -> float:
     if not event_facets or not cf_facets:
@@ -120,7 +137,6 @@ def facet_similarity(event_facets, cf_facets) -> float:
 
     return score / weight if weight else 0.0
 
-
 # =========================================================
 # Safety: Event Identity Validation
 # =========================================================
@@ -132,7 +148,6 @@ def _is_valid_event_id(event_id: str) -> bool:
         return False
     return True
 
-
 # =========================================================
 # CF Hypothesis Generation (READ ONLY)
 # =========================================================
@@ -140,12 +155,20 @@ def _is_valid_event_id(event_id: str) -> bool:
 def _generate_cf_hypotheses(event_text, now, event_facets) -> List[dict]:
     hypotheses = []
 
+    now_utc = _to_utc_aware(now)
+
     for cf in contexts_col.find({"status": "active"}):
         try:
-            s_text = semantic_similarity(event_text, cf.get("title", ""))
-            delta = (now - cf.get("last_activity", now)).total_seconds()
+            cf_last = _to_utc_aware(cf.get("last_activity", now_utc))
+
+            if not cf_last or not now_utc:
+                continue
+
+            delta = (now_utc - cf_last).total_seconds()
             s_time = max(0.0, 1 - delta / (CF_LOOKBACK_DAYS * 86400))
+            s_text = semantic_similarity(event_text, cf.get("title", ""))
             s_facet = facet_similarity(event_facets, cf.get("facets", {}))
+
             confidence = cf_confidence(s_text, s_time, s_facet)
 
             if confidence > 0:
@@ -156,22 +179,26 @@ def _generate_cf_hypotheses(event_text, now, event_facets) -> List[dict]:
                 })
 
         except Exception:
-            logger.exception("CF hypothesis generation failed for cf_id=%s", cf.get("cf_id"))
+            logger.exception(
+                "CF hypothesis generation failed for cf_id=%s",
+                cf.get("cf_id")
+            )
 
     hypotheses.sort(key=lambda x: x["confidence"], reverse=True)
     return hypotheses[:MAX_CF_CANDIDATES]
-
 
 # =========================================================
 # CF Creation
 # =========================================================
 
 def _create_cf_seed(seed_text, now, event_facets) -> dict:
+    now_utc = _to_utc_aware(now)
+
     cf_doc = {
         "cf_id": f"CF-{uuid.uuid4().hex[:6]}",
         "title": (seed_text or "")[:80],
-        "created_at": now,
-        "last_activity": now,
+        "created_at": now_utc,
+        "last_activity": now_utc,
         "status": "active",
         "version": 1,
         "facets": event_facets or {},
@@ -180,15 +207,17 @@ def _create_cf_seed(seed_text, now, event_facets) -> dict:
             "by_event_type": {}
         }
     }
+
     contexts_col.insert_one(cf_doc)
     return cf_doc
-
 
 # =========================================================
 # Persistence Helpers
 # =========================================================
 
 def _persist_event_cf_edges(event_id, event_type, hypotheses, now):
+    now_utc = _to_utc_aware(now)
+
     for h in hypotheses:
         edges_col.insert_one({
             "event_id": event_id,
@@ -196,15 +225,16 @@ def _persist_event_cf_edges(event_id, event_type, hypotheses, now):
             "cf_id": h["cf_id"],
             "confidence": h["confidence"],
             "origin": h["origin"],
-            "created_at": now,
-            "last_updated": now
+            "created_at": now_utc,
+            "last_updated": now_utc
         })
 
-
 def _update_cf_activity(hypotheses, now, event_type, event_facets):
+    now_utc = _to_utc_aware(now)
+
     for h in hypotheses:
         update = {
-            "$set": {"last_activity": now},
+            "$set": {"last_activity": now_utc},
             "$inc": {
                 "stats.event_count": 1,
                 f"stats.by_event_type.{event_type}": 1
@@ -216,7 +246,6 @@ def _update_cf_activity(hypotheses, now, event_type, event_facets):
                 update["$inc"][f"facets.{facet}.{k}"] = v * h["confidence"]
 
         contexts_col.update_one({"cf_id": h["cf_id"]}, update)
-
 
 # =========================================================
 # PUBLIC API (SAFE ENTRY POINT)
@@ -233,8 +262,8 @@ def process_event(
     """
     Safe CF processing.
     - Never crashes caller
-    - Never corrupts graph
-    - Logs and skips invalid events
+    - Handles legacy timestamps
+    - Timezone-safe
     """
 
     if not _is_valid_event_id(event_id):
@@ -244,7 +273,7 @@ def process_event(
         )
         return []
 
-    now = now or datetime.utcnow()
+    now = _to_utc_aware(now or datetime.utcnow())
 
     try:
         event_facets = extract_event_facets(event_text)

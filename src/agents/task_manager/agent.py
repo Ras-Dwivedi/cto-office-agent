@@ -1,7 +1,6 @@
 import time
 import logging
-import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from src.agents.task_manager.email_reader import fetch_new_emails
 from src.agents.task_manager.task_extractor import extract_tasks
@@ -52,6 +51,13 @@ def run_agent():
         for email in emails:
             uid = email.get("uid")
 
+            # 🔑 Email receipt time (SOURCE OF TRUTH)
+            email_received_at = email.get("received_at")
+
+            # Fallback (should rarely happen)
+            if not email_received_at:
+                email_received_at = datetime.utcnow().replace(tzinfo=timezone.utc)
+
             try:
                 logger.info("Processing email UID=%s", uid)
                 tasks = extract_tasks(email)
@@ -72,9 +78,16 @@ def run_agent():
             for task in tasks:
                 try:
                     # ----------------------------------------
-                    # Store task (existing behavior)
+                    # 🔑 Set task origin time = email received time
                     # ----------------------------------------
-                    task_id = store_task(task)
+                    task["created_at"] = email_received_at.isoformat()
+                    task["last_activity_at"] = email_received_at.isoformat()
+
+                    # ----------------------------------------
+                    # Store task (identity owned by task_store)
+                    # ----------------------------------------
+                    store_task(task)
+                    task_id = task.get("task_id")
 
                     logger.info(
                         "📝 Stored task '%s' (task_id=%s) from email UID=%s",
@@ -85,13 +98,20 @@ def run_agent():
 
                     # ----------------------------------------
                     # Emit TASK event to CF engine
+                    # Use email time, not now()
                     # ----------------------------------------
-                    process_event(
-                        event_id=f"TASK-{task_id}",
-                        event_type="task",
-                        event_text=task.get("title", ""),
-                        now=datetime.utcnow()
-                    )
+                    if task_id:
+                        process_event(
+                            event_id=task_id,
+                            event_type="task",
+                            event_text=task.get("title", ""),
+                            now=email_received_at
+                        )
+                    else:
+                        logger.warning(
+                            "⚠️ Skipping CF event for task without task_id (email UID=%s)",
+                            uid
+                        )
 
                 except Exception:
                     logger.exception(

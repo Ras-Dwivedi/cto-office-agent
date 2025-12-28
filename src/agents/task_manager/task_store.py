@@ -1,4 +1,5 @@
 from datetime import datetime
+import uuid
 from src.db import get_collection
 
 tasks_col = get_collection("tasks")
@@ -7,6 +8,7 @@ tasks_col = get_collection("tasks")
 def store_task(tasks):
     """
     Store one or more tasks idempotently.
+    Ensures every task has a stable task_id.
     """
 
     if isinstance(tasks, dict):
@@ -18,13 +20,18 @@ def store_task(tasks):
         # Never reuse Mongo _id
         task.pop("_id", None)
 
-        # Ensure timestamps
+        # -------------------------------------------------
+        # 🔑 ENSURE TASK ID (SOURCE OF TRUTH)
+        # -------------------------------------------------
+        if not task.get("task_id"):
+            task["task_id"] = f"TASK-{uuid.uuid4().hex[:8]}"
+
+        # Ensure timestamps & defaults
         created_at = task.get("created_at", now)
         task["last_activity_at"] = now
         task.setdefault("status", "OPEN")
 
-        # IMPORTANT:
-        # Remove created_at from $set payload to avoid conflict
+        # Avoid updating created_at on existing docs
         task_without_created = dict(task)
         task_without_created.pop("created_at", None)
 

@@ -12,11 +12,20 @@ def main():
         description="CTO Office Control Tool"
     )
 
-    # ---- SHORTCUT FLAGS ----
+    # =====================================================
+    # SHORTCUT FLAGS
+    # =====================================================
+
     parser.add_argument(
         "-p", "--pomodoro",
         action="store_true",
-        help="Start a Pomodoro session"
+        help="Start a live Pomodoro session"
+    )
+
+    parser.add_argument(
+        "-pl", "--pomodoro-log",
+        action="store_true",
+        help="Log past work (no timer)"
     )
 
     parser.add_argument(
@@ -25,20 +34,22 @@ def main():
         help="Show top priority tasks"
     )
 
-    # 🔹 NEW: interrupt shortcuts
+    # -------- Interrupt shortcuts --------
     parser.add_argument(
         "-c", "--call",
         action="store_true",
-        help="Log a phone call as an interrupt event"
+        help="Log a phone call as a work event"
     )
 
     parser.add_argument(
         "-w", "--whatsapp",
         action="store_true",
-        help="Log a WhatsApp message as an interrupt event"
+        help="Log a WhatsApp message as a work event"
     )
 
-    # ---- COMMAND ----
+    # =====================================================
+    # COMMAND (fallback)
+    # =====================================================
     parser.add_argument(
         "command",
         nargs="?",
@@ -47,16 +58,22 @@ def main():
 
     args = parser.parse_args()
 
-    # ---- SHORTCUT RESOLUTION ----
+    # =====================================================
+    # SHORTCUT RESOLUTION (highest priority)
+    # =====================================================
+
     if args.pomodoro:
-        COMMAND_ROUTES["pomodoro"]["handler"]()
+        COMMAND_ROUTES["pomodoro-live"]["handler"]()
+        return
+
+    if args.pomodoro_log:
+        COMMAND_ROUTES["pomodoro-log"]["handler"]()
         return
 
     if args.priority:
         COMMAND_ROUTES["priority"]["handler"]()
         return
 
-    # 🔹 NEW: interrupt shortcut resolution
     if args.call:
         COMMAND_ROUTES["call"]["handler"]()
         return
@@ -65,16 +82,19 @@ def main():
         COMMAND_ROUTES["wa"]["handler"]()
         return
 
-    # ---- NORMAL COMMAND FLOW ----
+    # =====================================================
+    # NORMAL COMMAND FLOW
+    # =====================================================
+
     if not args.command:
         parser.print_help()
         return
 
     if args.command not in COMMAND_ROUTES:
         print(f"Unknown command: {args.command}")
-        print("Available commands:")
+        print("\nAvailable commands:")
         for cmd, meta in COMMAND_ROUTES.items():
-            print(f"  {cmd:15} {meta['help']}")
+            print(f"  {cmd:18} {meta['help']}")
         sys.exit(1)
 
     COMMAND_ROUTES[args.command]["handler"]()

@@ -36,4 +36,25 @@ def main(dry_run=True):
     }
 
     task_count = tasks_col.count_documents(task_query)
-    print(f"\n🧹 Found {task_count} task_
+    print(f"\n🧹 Found {task_count} task(s) without task_id")
+
+    if task_count > 0:
+        if dry_run:
+            print("⚠️ DRY RUN — tasks NOT deleted")
+        else:
+            result = tasks_col.delete_many(task_query)
+            print(f"🔥 Deleted {result.deleted_count} task(s)")
+    else:
+        print("✅ No invalid tasks found")
+
+
+if __name__ == "__main__":
+    # -------------------------------------------------
+    # FIRST RUN (SAFE)
+    # -------------------------------------------------
+    main(dry_run=True)
+
+    # -------------------------------------------------
+    # AFTER VERIFYING OUTPUT, RUN:
+    # main(dry_run=False)
+    # -------------------------------------------------

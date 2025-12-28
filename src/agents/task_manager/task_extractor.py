@@ -4,29 +4,10 @@ import logging
 from datetime import datetime
 
 from src.config.config import OLLAMA_URL, OLLAMA_MODEL
-from src.db import get_collection
-
 from src.agents.task_manager.utils.project_resolver import resolve_project_id
-from src.agents.task_manager.utils.task_id import generate_task_id
-from src.agents.task_manager.utils.verb_resolver import resolve_task_verb  # you should have / add this
+from src.agents.task_manager.utils.verb_resolver import resolve_task_verb
 
 logger = logging.getLogger(__name__)
-
-tasks_col = get_collection("tasks")
-
-
-def store_task(task):
-    """
-    Store a task with required metadata for downstream agents.
-    NOTE: This assumes idempotency / upsert may be added later.
-    """
-    now = datetime.utcnow().isoformat()
-
-    task.setdefault("created_at", now)
-    task["last_activity_at"] = now
-    task.setdefault("status", "OPEN")
-
-    tasks_col.insert_one(task)
 
 
 def extract_tasks(email):
@@ -36,7 +17,8 @@ def extract_tasks(email):
     Responsibilities:
     - Call LLM for task extraction ONLY
     - Enrich tasks with deterministic metadata
-    - Store tasks
+    - NEVER generate task_id
+    - NEVER write to DB
     """
 
     prompt = f"""
@@ -73,9 +55,9 @@ Return STRICT JSON array only:
 ]
 
 Email:
-Subject: {email['subject']}
+Subject: {email.get('subject')}
 Body:
-{email['body']}
+{email.get('body')}
 """
 
     # ---------------- LLM call ----------------
@@ -125,31 +107,30 @@ Body:
         logger.error("Failed to parse task JSON from LLM output:\n%s", text)
         raise RuntimeError("Invalid task JSON")
 
-    # ---------------- Enrich + store tasks ----------------
+    now = datetime.utcnow().isoformat()
+
+    # ---------------- Enrich tasks (NO IDENTITY) ----------------
     for task in tasks:
-        # ---- Email provenance (SOURCE OF TRUTH) ----
+        # ---- Safety: never trust LLM for identity ----
+        task.pop("task_id", None)
+
+        # ---- Email provenance ----
         task["email_uid"] = email.get("uid")
         task["email_subject"] = email.get("subject")
         task["email_from"] = email.get("from")
         task["source"] = "email"
 
-        # ---- Project resolution (deterministic) ----
+        # ---- Deterministic enrichment ----
         task["project_id"] = resolve_project_id(task)
-
-        # ---- Verb resolution (deterministic) ----
         task["task_verb"] = resolve_task_verb(task)
 
-        # ---- Deterministic task identity ----
-        task["task_id"] = generate_task_id(
-            project_id=task["project_id"],
-            verb=task["task_verb"],
-            title=task["title"]
-        )
-
-        store_task(task)
+        # ---- Timestamps (non-identity) ----
+        task.setdefault("created_at", now)
+        task["last_activity_at"] = now
+        task.setdefault("status", "OPEN")
 
     logger.info(
-        "Extracted and stored %d task(s) from email UID=%s",
+        "Extracted %d task(s) from email UID=%s",
         len(tasks),
         email.get("uid")
     )
