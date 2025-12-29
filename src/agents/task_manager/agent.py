@@ -4,35 +4,50 @@ from datetime import datetime, timezone
 
 from src.agents.task_manager.email_reader import fetch_new_emails
 from src.agents.task_manager.task_extractor import extract_tasks
-from src.agents.task_manager.task_store import store_task
 from src.agents.task_manager.utils.cf_engine import process_event
+from src.agents.task_manager.utils.event_engine import event_engine
 from src.config.config import EMAIL_POLL_SECONDS
 
 
-# ---------- LOGGING SETUP ----------
+# =========================================================
+# LOGGING
+# =========================================================
+
 def setup_logging():
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
     )
 
-
 setup_logging()
-logger = logging.getLogger("agent.task_manager.email_ingestor")
+logger = logging.getLogger("agent.email_event_ingestor")
 
 
-# ---------- SLEEP CONSTANTS ----------
-LONG_SLEEP = 2 * 60 * 60        # 2 hours
+# =========================================================
+# CONSTANTS
+# =========================================================
+
+LONG_SLEEP = 2 * 60 * 60
 SHORT_SLEEP = EMAIL_POLL_SECONDS
 
 
-# ---------- AGENT LOOP ----------
+# =========================================================
+# HELPERS
+# =========================================================
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+# =========================================================
+# AGENT LOOP
+# =========================================================
+
 def run_agent():
-    logger.info("📥 Email Task Agent started (CF-aware)")
+    logger.info("📥 Email Event Agent started (EventEngine → CF)")
 
     while True:
         try:
-            logger.debug("Fetching new emails")
             result = fetch_new_emails()
         except Exception:
             logger.exception("❌ Failed to fetch emails")
@@ -42,90 +57,100 @@ def run_agent():
         emails = result.get("emails", [])
         exhausted = result.get("exhausted", True)
 
-        logger.info(
-            "Fetched %d email(s) | exhausted=%s",
-            len(emails),
-            exhausted
-        )
+        logger.info("Fetched %d email(s)", len(emails))
 
         for email in emails:
             uid = email.get("uid")
+            received_at = email.get("received_at") or utc_now()
 
-            # 🔑 Email receipt time (SOURCE OF TRUTH)
-            email_received_at = email.get("received_at")
-
-            # Fallback (should rarely happen)
-            if not email_received_at:
-                email_received_at = datetime.utcnow().replace(tzinfo=timezone.utc)
-
+            # -------------------------------------------------
+            # 1️⃣ EMAIL RECEIVED EVENT (FACT)
+            # -------------------------------------------------
             try:
-                logger.info("Processing email UID=%s", uid)
-                tasks = extract_tasks(email)
+                email_event = event_engine.register_event(
+                    event_type="email.received",
+                    occurred_at=received_at,
+                    payload={
+                        "uid": uid,
+                        "subject": email.get("subject"),
+                        "from": email.get("from"),
+                    },
+                )
+
+                process_event(
+                    event_id=email_event["event_id"],
+                    event_type="email",
+                    event_text=email.get("subject", ""),
+                    now=received_at,
+                )
+
             except Exception:
-                logger.exception(
-                    "❌ Unable to extract tasks from email UID=%s",
-                    uid
-                )
+                logger.exception("❌ Failed to register email.received UID=%s", uid)
                 continue
 
-            if not tasks:
-                logger.info(
-                    "No actionable tasks found for email UID=%s",
-                    uid
-                )
+            # -------------------------------------------------
+            # 2️⃣ TASK CANDIDATE EXTRACTION (PURE)
+            # -------------------------------------------------
+            try:
+                extracted_tasks = extract_tasks(email)
+            except Exception:
+                logger.exception("❌ Task extraction failed for UID=%s", uid)
                 continue
 
-            for task in tasks:
+            if not extracted_tasks:
+                continue
+
+            # -------------------------------------------------
+            # 3️⃣ TASK CANDIDATE EVENTS (NOT TASKS)
+            # -------------------------------------------------
+            for t in extracted_tasks:
                 try:
-                    # ----------------------------------------
-                    # 🔑 Set task origin time = email received time
-                    # ----------------------------------------
-                    task["created_at"] = email_received_at.isoformat()
-                    task["last_activity_at"] = email_received_at.isoformat()
-
-                    # ----------------------------------------
-                    # Store task (identity owned by task_store)
-                    # ----------------------------------------
-                    store_task(task)
-                    task_id = task.get("task_id")
-
-                    logger.info(
-                        "📝 Stored task '%s' (task_id=%s) from email UID=%s",
-                        task.get("title"),
-                        task_id,
-                        uid
+                    candidate_event = event_engine.register_event(
+                        event_type="task.candidate_detected",
+                        occurred_at=received_at,
+                        payload={
+                            "title": t["title"],
+                            "source": "email",
+                            "source_ref": str(uid),
+                            "email": {
+                                "uid": uid,
+                                "subject": email.get("subject"),
+                                "from": email.get("from"),
+                            },
+                            "signals": {
+                                "institutional": t.get("institutional"),
+                                "delegatable": t.get("delegatable"),
+                                "blocks_others": t.get("blocks_others"),
+                                "external_dependency": t.get("external_dependency"),
+                                "due_by": t.get("due_by"),
+                            },
+                        },
                     )
 
-                    # ----------------------------------------
-                    # Emit TASK event to CF engine
-                    # Use email time, not now()
-                    # ----------------------------------------
-                    if task_id:
-                        process_event(
-                            event_id=task_id,
-                            event_type="task",
-                            event_text=task.get("title", ""),
-                            now=email_received_at
-                        )
-                    else:
-                        logger.warning(
-                            "⚠️ Skipping CF event for task without task_id (email UID=%s)",
-                            uid
-                        )
+                    process_event(
+                        event_id=candidate_event["event_id"],
+                        event_type="task_candidate",
+                        event_text=t["title"],
+                        now=received_at,
+                    )
+
+                    logger.info(
+                        "🧠 Task candidate emitted (email UID=%s → %s)",
+                        uid,
+                        candidate_event["event_id"],
+                    )
 
                 except Exception:
                     logger.exception(
-                        "❌ Failed to process task from email UID=%s",
-                        uid
+                        "❌ Failed to emit task candidate (email UID=%s)", uid
                     )
 
-        if exhausted:
-            logger.info("📭 Inbox fully processed. Sleeping for 2 hours.")
-            time.sleep(LONG_SLEEP)
-        else:
-            logger.info("📨 Pending backlog detected. Sleeping briefly.")
-            time.sleep(SHORT_SLEEP)
+        time.sleep(LONG_SLEEP if exhausted else SHORT_SLEEP)
 
+
+# =========================================================
+# CLI ENTRY
+# =========================================================
 
 def main():
     run_agent()

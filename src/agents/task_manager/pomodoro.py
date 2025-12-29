@@ -7,7 +7,7 @@ from datetime import datetime, timezone, timedelta
 from src.db import get_collection
 from src.config.config import POMODORO_MINUTES
 from src.agents.task_manager.utils.cf_engine import process_event
-from src.agents.task_manager.utils.task_engine import update_task_from_pomodoro
+from src.agents.task_manager.utils.event_engine import event_engine
 
 logger = logging.getLogger("pomodoro")
 
@@ -31,33 +31,6 @@ def countdown(minutes: int):
 
 
 # =========================================================
-# Pomodoro Recorder (IMMUTABLE EVENT)
-# =========================================================
-
-def record_pomodoro(
-    *,
-    pomodoros_col,
-    pomodoro_id: str,
-    task_text: str,
-    start: datetime,
-    end: datetime,
-    duration_minutes: int,
-    task_id: str | None,
-    source: str,
-):
-    pomodoros_col.insert_one({
-        "pomodoro_id": pomodoro_id,
-        "task_id": task_id,
-        "task_hint": task_text,
-        "started_at": start,
-        "ended_at": end,
-        "duration_minutes": duration_minutes,
-        "created_at": utc_now(),
-        "source": source,
-    })
-
-
-# =========================================================
 # Main CLI Entry
 # =========================================================
 
@@ -69,13 +42,12 @@ def main(mode: str = "interactive"):
       - interactive : ask user
     """
 
-    pomodoros_col = get_collection("pomodoros")
-    tasks_col = get_collection("tasks")
+    work_col = get_collection("pomodoros")
 
     print("\n🍅 Work Logger\n")
 
     # -----------------------------
-    # Mode resolution
+    # Mode selection
     # -----------------------------
     if mode == "interactive":
         print("How do you want to log work?")
@@ -126,7 +98,7 @@ def main(mode: str = "interactive"):
         source = "pomodoro"
 
     # =====================================================
-    # MANUAL LOG (PAST WORK)
+    # MANUAL WORK LOG (PAST WORK)
     # =====================================================
     else:
         mins = input("How many minutes did you work? ").strip()
@@ -143,57 +115,55 @@ def main(mode: str = "interactive"):
         source = "manual"
 
     # =====================================================
-    # Persist work event
+    # IMMUTABLE WORK EVENT
     # =====================================================
-    pomodoro_id = f"WORK-{uuid.uuid4().hex[:8]}"
+    work_id = f"WORK-{uuid.uuid4().hex[:8]}"
 
-    record_pomodoro(
-        pomodoros_col=pomodoros_col,
-        pomodoro_id=pomodoro_id,
-        task_text=task_text,
-        start=start_time,
-        end=end_time,
-        duration_minutes=duration,
-        task_id=task_id,
-        source=source,
+
+    work_col.insert_one({
+        "work_id": work_id,
+        "task_id": task_id,
+        "task_hint": task_text,
+        "started_at": start_time,
+        "ended_at": end_time,
+        "duration_minutes": duration,
+        "created_at": utc_now(),
+        "source": source,
+    })
+
+    # =====================================================
+    # EVENT ENGINE (single authority)
+    # =====================================================
+    event = event_engine.register_event(
+        event_type="work.logged",
+        occurred_at=end_time,
+        payload={
+            "task_id": task_id,
+            "task_text": task_text,
+            "duration_minutes": duration,
+            "source": source,
+        }
     )
 
     # =====================================================
-    # CF Inference (graph-owned)
+    # CF INFERENCE (event-driven)
     # =====================================================
     cf_hypotheses = process_event(
-        event_id=pomodoro_id,
-        event_type="work",
+        event_id=event["event_id"],
+        event_type=event["event_type"],
         event_text=task_text,
         now=end_time,
     )
 
     # =====================================================
-    # Optional task update
-    # =====================================================
-    if task_id:
-        try:
-            status, desc = update_task_from_pomodoro(
-                tasks_col=tasks_col,
-                task_id=task_id
-            )
-        except Exception:
-            logger.exception("Failed to update task from work log")
-            status, desc = "error", "Task update failed"
-    else:
-        status, desc = "unlinked", "Work recorded without task linkage"
-
-    # =====================================================
-    # User feedback
+    # USER FEEDBACK
     # =====================================================
     print("\n✅ Work recorded successfully")
 
-    if status == "completed":
-        print(f"🎯 Task completed: {desc}")
-    elif status == "progress":
-        print(f"⏳ Task progress recorded: {desc}")
+    if task_id:
+        print(f"📝 Work linked to task: {task_id}")
     else:
-        print(f"📝 {desc}")
+        print("📝 Work recorded without task linkage")
 
     if cf_hypotheses:
         print("\n🔗 Contexts inferred:")
