@@ -1,122 +1,126 @@
-import time
 import logging
+import time
 from datetime import datetime, timezone
 
-from src.agents.task_manager.email_reader import fetch_new_emails
-from src.agents.task_manager.task_extractor import extract_tasks
-from src.agents.task_manager.utils.cf_engine import process_event
+from src.agents.task_manager.email_extractor import extract_tasks, extract_decisions
 from src.agents.task_manager.utils.event_engine import event_engine
 from src.config.config import EMAIL_POLL_SECONDS
-
+from src.db import get_collection
 
 # =========================================================
 # LOGGING
 # =========================================================
 
-def setup_logging():
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
-    )
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+)
 
-setup_logging()
-logger = logging.getLogger("agent.email_event_ingestor")
-
+logger = logging.getLogger("agent.email_event_agent")
 
 # =========================================================
 # CONSTANTS
 # =========================================================
 
+PROCESSOR_NAME = "email_event_agent"
+PROCESSOR_VERSION = 1
+
 LONG_SLEEP = 2 * 60 * 60
 SHORT_SLEEP = EMAIL_POLL_SECONDS
+BATCH_LIMIT = 20
 
+# =========================================================
+# DB COLLECTIONS
+# =========================================================
+
+emails_col = get_collection("raw_emails")
 
 # =========================================================
 # HELPERS
 # =========================================================
 
-def utc_now() -> datetime:
+def utc_now():
     return datetime.now(timezone.utc)
-
 
 # =========================================================
 # AGENT LOOP
 # =========================================================
 
 def run_agent():
-    logger.info("📥 Email Event Agent started (EventEngine → CF)")
+    logger.info("📥 Email Event Agent started (raw_emails → events)")
 
     while True:
-        try:
-            result = fetch_new_emails()
-        except Exception:
-            logger.exception("❌ Failed to fetch emails")
-            time.sleep(SHORT_SLEEP)
+        # -------------------------------------------------
+        # Fetch unprocessed raw emails
+        # -------------------------------------------------
+        emails = list(
+            emails_col.find(
+                {
+                    "$or": [
+                        {"processing": {"$exists": False}},
+                        {"processing.status": {"$ne": "processed"}},
+                    ]
+                }
+            )
+            .sort("received_at", 1)
+            .limit(BATCH_LIMIT)
+        )
+
+        if not emails:
+            logger.info("📭 No pending emails. Sleeping.")
+            time.sleep(LONG_SLEEP)
             continue
 
-        emails = result.get("emails", [])
-        exhausted = result.get("exhausted", True)
-
-        logger.info("Fetched %d email(s)", len(emails))
+        logger.info("Processing %d raw email(s)", len(emails))
 
         for email in emails:
+            email_id = email["_id"]
             uid = email.get("uid")
             received_at = email.get("received_at") or utc_now()
 
-            # -------------------------------------------------
-            # 1️⃣ EMAIL RECEIVED EVENT (FACT)
-            # -------------------------------------------------
             try:
+                # =================================================
+                # 1️⃣ EMAIL RECEIVED EVENT (FACT)
+                # =================================================
                 email_event = event_engine.register_event(
                     event_type="email.received",
                     occurred_at=received_at,
                     payload={
-                        "uid": uid,
+                        "email_uid": uid,
+                        "folder": email.get("folder"),
                         "subject": email.get("subject"),
                         "from": email.get("from"),
+                        "to": email.get("to"),
+                        "raw_email_ref": email_id,
+                        "ingestion_version": PROCESSOR_VERSION,
                     },
                 )
 
-                process_event(
-                    event_id=email_event["event_id"],
-                    event_type="email",
-                    event_text=email.get("subject", ""),
-                    now=received_at,
+                logger.info(
+                    "📨 email.received → %s (UID=%s)",
+                    email_event["event_id"],
+                    uid,
                 )
 
-            except Exception:
-                logger.exception("❌ Failed to register email.received UID=%s", uid)
-                continue
-
-            # -------------------------------------------------
-            # 2️⃣ TASK CANDIDATE EXTRACTION (PURE)
-            # -------------------------------------------------
-            try:
-                extracted_tasks = extract_tasks(email)
-            except Exception:
-                logger.exception("❌ Task extraction failed for UID=%s", uid)
-                continue
-
-            if not extracted_tasks:
-                continue
-
-            # -------------------------------------------------
-            # 3️⃣ TASK CANDIDATE EVENTS (NOT TASKS)
-            # -------------------------------------------------
-            for t in extracted_tasks:
+                # =================================================
+                # 2️⃣ TASK CANDIDATE EXTRACTION (PURE)
+                # =================================================
                 try:
-                    candidate_event = event_engine.register_event(
+                    tasks = extract_tasks(email)
+                except Exception as e:
+                    logger.warning(
+                        "⚠️ Task extraction failed UID=%s: %s", uid, e
+                    )
+                    tasks = []
+
+                for t in tasks:
+                    event_engine.register_event(
                         event_type="task.candidate_detected",
                         occurred_at=received_at,
                         payload={
                             "title": t["title"],
                             "source": "email",
-                            "source_ref": str(uid),
-                            "email": {
-                                "uid": uid,
-                                "subject": email.get("subject"),
-                                "from": email.get("from"),
-                            },
+                            "source_ref": email_event["event_id"],
                             "signals": {
                                 "institutional": t.get("institutional"),
                                 "delegatable": t.get("delegatable"),
@@ -124,28 +128,86 @@ def run_agent():
                                 "external_dependency": t.get("external_dependency"),
                                 "due_by": t.get("due_by"),
                             },
+                            "email": {
+                                "uid": uid,
+                                "subject": email.get("subject"),
+                                "from": email.get("from"),
+                            },
+                            "extractor_version": PROCESSOR_VERSION,
                         },
                     )
 
-                    process_event(
-                        event_id=candidate_event["event_id"],
-                        event_type="task_candidate",
-                        event_text=t["title"],
-                        now=received_at,
+                # =================================================
+                # 3️⃣ DECISION EXTRACTION (PURE)
+                # =================================================
+                try:
+                    decisions = extract_decisions(email)
+                except Exception as e:
+                    logger.warning(
+                        "⚠️ Decision extraction failed UID=%s: %s", uid, e
+                    )
+                    decisions = []
+
+                for d in decisions:
+                    event_engine.register_event(
+                        event_type="decision.detected",
+                        occurred_at=received_at,
+                        payload={
+                            "decision": d["decision"],
+                            "context": d.get("context"),
+                            "expected_outcome": d.get("expected_outcome"),
+                            "review_date": d.get("review_date"),
+                            "source": "email",
+                            "source_ref": email_event["event_id"],
+                            "email": {
+                                "uid": uid,
+                                "subject": email.get("subject"),
+                                "from": email.get("from"),
+                            },
+                            "extractor_version": PROCESSOR_VERSION,
+                        },
                     )
 
-                    logger.info(
-                        "🧠 Task candidate emitted (email UID=%s → %s)",
-                        uid,
-                        candidate_event["event_id"],
-                    )
+                # =================================================
+                # 4️⃣ MARK EMAIL AS PROCESSED (SAFE)
+                # =================================================
+                emails_col.update_one(
+                    {"_id": email_id},
+                    {
+                        "$set": {
+                            "processing": {
+                                "status": "processed",
+                                "processor": PROCESSOR_NAME,
+                                "version": PROCESSOR_VERSION,
+                                "last_attempt_at": utc_now(),
+                                "error": None,
+                            }
+                        }
+                    },
+                )
 
-                except Exception:
-                    logger.exception(
-                        "❌ Failed to emit task candidate (email UID=%s)", uid
-                    )
+            except Exception as e:
+                logger.exception("❌ Failed processing email UID=%s", uid)
 
-        time.sleep(LONG_SLEEP if exhausted else SHORT_SLEEP)
+                # -------------------------------------------------
+                # FAILURE STATE (FULL OBJECT UPDATE – SAFE)
+                # -------------------------------------------------
+                emails_col.update_one(
+                    {"_id": email_id},
+                    {
+                        "$set": {
+                            "processing": {
+                                "status": "failed",
+                                "processor": PROCESSOR_NAME,
+                                "version": PROCESSOR_VERSION,
+                                "last_attempt_at": utc_now(),
+                                "error": str(e),
+                            }
+                        }
+                    },
+                )
+
+        time.sleep(SHORT_SLEEP)
 
 
 # =========================================================

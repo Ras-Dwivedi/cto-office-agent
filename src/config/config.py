@@ -1,4 +1,5 @@
 import os
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -21,4 +22,6 @@ DB_NAME = os.getenv("DB_NAME")
 
 EMAIL_POLL_SECONDS = int(os.getenv("EMAIL_POLL_SECONDS", 60))
 EMAIL_SLEEP_TIME__IN_HOURS = 2
+EMAIL_PROCESSING_BATCH_SIZE = 10
 POMODORO_MINUTES = 25
+MAILBOX= "PRIMARY"

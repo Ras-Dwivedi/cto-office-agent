@@ -1,4 +1,5 @@
 from src.db import get_collection
+MAILBOX_NAME = "PRIMARY"
 
 
 def main(dry_run=True):
@@ -47,13 +48,38 @@ def main(dry_run=True):
     else:
         print("✅ No invalid tasks found")
 
+def index_creator():
+    def create_raw_email_index():
+        emails_col = get_collection("raw_emails")
+
+        try:
+            emails_col.create_index(
+                [
+                    ("mailbox", 1),
+                    ("folder", 1),
+                    ("uid", 1),
+                ],
+                unique=True,
+                name="uniq_mailbox_folder_uid",
+            )
+            print("✅ Unique index created on raw_emails(mailbox, folder, uid)")
+
+        except Exception as e:
+            if "already exists" in str(e):
+                print("ℹ️ Index already exists")
+            else:
+                raise
+
+    if __name__ == "__main__":
+        create_raw_email_index()
+
 
 if __name__ == "__main__":
     # -------------------------------------------------
     # FIRST RUN (SAFE)
     # -------------------------------------------------
-    main(dry_run=True)
-
+    # main(dry_run=True)
+    index_creator()
     # -------------------------------------------------
     # AFTER VERIFYING OUTPUT, RUN:
     # main(dry_run=False)

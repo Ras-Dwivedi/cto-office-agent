@@ -1,12 +1,9 @@
 import time
-import logging
 from datetime import datetime, timezone
 
 from src.agents.task_manager.email_reader import fetch_new_emails
-from src.agents.task_manager.task_extractor import extract_tasks
-from src.agents.task_manager.utils.event_engine import event_engine
-from src.config.config import EMAIL_POLL_SECONDS
 from src.agents.utils.logger import logger
+from src.config.config import EMAIL_POLL_SECONDS
 
 # =========================================================
 # CONSTANTS

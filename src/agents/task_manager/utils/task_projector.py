@@ -1,11 +1,10 @@
 # src/agents/task_manager/task_projector.py
 
 import logging
-from datetime import datetime
 from typing import Dict
 
-from src.db import get_collection
 from src.agents.task_manager.utils.task_engine import task_engine
+from src.db import get_collection
 
 logger = logging.getLogger("task_projector")
 

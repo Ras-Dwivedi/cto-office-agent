@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 
-import sys
 import hashlib
-import uuid
 import logging
+import sys
+import uuid
 from datetime import datetime, timezone
 
-from src.db import get_collection
 from src.agents.task_manager.utils.cf_engine import process_event
+from src.db import get_collection
 
 logger = logging.getLogger("record_decision")
 

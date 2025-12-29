@@ -1,5 +1,6 @@
-import yaml
 from pathlib import Path
+
+import yaml
 
 # Resolve config/projects.yaml relative to repo root
 PROJECTS_FILE = Path(__file__).resolve().parents[2] / "src" / "config" / "projects.yaml"

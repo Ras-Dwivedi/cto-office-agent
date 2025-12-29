@@ -1,4 +1,5 @@
 from datetime import datetime
+
 from dateutil.parser import parse
 
 from src.db import get_collection

@@ -1,13 +1,14 @@
-import time
-import sys
-import uuid
 import logging
+import sys
+import time
+import uuid
 from datetime import datetime, timezone, timedelta
 
-from src.db import get_collection
-from src.config.config import POMODORO_MINUTES
-from src.agents.task_manager.utils.cf_engine import process_event
+
 from src.agents.task_manager.utils.event_engine import event_engine
+from src.agents.task_manager.utils.work_engine import work_engine
+from src.config.config import POMODORO_MINUTES
+from src.db import get_collection
 
 logger = logging.getLogger("pomodoro")
 
@@ -117,61 +118,44 @@ def main(mode: str = "interactive"):
     # =====================================================
     # IMMUTABLE WORK EVENT
     # =====================================================
-    work_id = f"WORK-{uuid.uuid4().hex[:8]}"
+    try:
+        event = event_engine.register_event(
+            event_type="work.logged",
+            occurred_at=end_time,
+            payload={
+                "task_id": task_id,
+                "task_text": task_text,
+                "duration_minutes": duration,
+                "source": source,
+            }
+        )
+        event_id = event.get("event_id")
+        logger.info(f"logged pomodoro event {event_id}")
+    except Exception:
+        logger.exception("❌ Failed to register pomodoro event")
+        return
 
 
-    work_col.insert_one({
-        "work_id": work_id,
-        "task_id": task_id,
-        "task_hint": task_text,
-        "started_at": start_time,
-        "ended_at": end_time,
-        "duration_minutes": duration,
-        "created_at": utc_now(),
-        "source": source,
-    })
+    try:
+        work = work_engine.record_work(
+            event_id=event_id,
+            title=task_text,
+            started_at=start_time,
+            ended_at=end_time,
+            source="pomodoro",
+        )
 
-    # =====================================================
-    # EVENT ENGINE (single authority)
-    # =====================================================
-    event = event_engine.register_event(
-        event_type="work.logged",
-        occurred_at=end_time,
-        payload={
-            "task_id": task_id,
-            "task_text": task_text,
-            "duration_minutes": duration,
-            "source": source,
-        }
-    )
+        logger.info(f"work logged pomodoro event {work['work_id']}")
+    except Exception:
+        logger.exception("❌ Failed to log work")
 
-    # =====================================================
-    # CF INFERENCE (event-driven)
-    # =====================================================
-    cf_hypotheses = process_event(
-        event_id=event["event_id"],
-        event_type=event["event_type"],
-        event_text=task_text,
-        now=end_time,
-    )
 
-    # =====================================================
-    # USER FEEDBACK
-    # =====================================================
     print("\n✅ Work recorded successfully")
 
     if task_id:
         print(f"📝 Work linked to task: {task_id}")
     else:
         print("📝 Work recorded without task linkage")
-
-    if cf_hypotheses:
-        print("\n🔗 Contexts inferred:")
-        for h in cf_hypotheses:
-            print(f"  - {h['cf_id']} (confidence={h['confidence']})")
-    else:
-        print("\n🔗 No context inferred")
-
 
 # =========================================================
 
