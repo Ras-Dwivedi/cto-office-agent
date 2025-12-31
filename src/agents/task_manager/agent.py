@@ -1,9 +1,14 @@
 import logging
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
-from src.agents.task_manager.email_extractor import extract_tasks, extract_decisions
+from src.agents.task_manager.email_extractor import (
+    extract_tasks,
+    extract_decisions,
+)
 from src.agents.task_manager.utils.event_engine import event_engine
+from src.agents.task_manager.utils.attachment.signal_extractor import extract_attachment_signals
 from src.config.config import EMAIL_POLL_SECONDS
 from src.db import get_collection
 
@@ -23,7 +28,7 @@ logger = logging.getLogger("agent.email_event_agent")
 # =========================================================
 
 PROCESSOR_NAME = "email_event_agent"
-PROCESSOR_VERSION = 1
+PROCESSOR_VERSION = 2  # ⬅️ bump version due to attachment signals
 
 LONG_SLEEP = 2 * 60 * 60
 SHORT_SLEEP = EMAIL_POLL_SECONDS
@@ -103,7 +108,49 @@ def run_agent():
                 )
 
                 # =================================================
-                # 2️⃣ TASK CANDIDATE EXTRACTION (PURE)
+                # 2️⃣ ATTACHMENT WEAK SIGNAL EXTRACTION (PURE)
+                # =================================================
+                for attachment in email.get("attachments", []):
+                    path = attachment.get("path")
+                    if not path:
+                        continue
+
+                    try:
+                        sig = extract_attachment_signals(path)
+                    except Exception as e:
+                        logger.warning(
+                            "⚠️ Attachment signal failed UID=%s file=%s: %s",
+                            uid,
+                            path,
+                            e,
+                        )
+                        continue
+
+                    if not sig:
+                        continue
+
+                    event_engine.register_event(
+                        event_type="attachment.signals_detected",
+                        occurred_at=received_at,
+                        payload={
+                            "source": "email",
+                            "source_ref": email_event["event_id"],
+                            "email": {
+                                "uid": uid,
+                                "subject": email.get("subject"),
+                                "from": email.get("from"),
+                            },
+                            "attachment": {
+                                "filename": sig["filename"],
+                                "signal_strength": sig["signal_strength"],
+                            },
+                            "signals": sig["signals"],
+                            "extractor_version": PROCESSOR_VERSION,
+                        },
+                    )
+
+                # =================================================
+                # 3️⃣ TASK CANDIDATE EXTRACTION (PURE LLM)
                 # =================================================
                 try:
                     tasks = extract_tasks(email)
@@ -138,7 +185,7 @@ def run_agent():
                     )
 
                 # =================================================
-                # 3️⃣ DECISION EXTRACTION (PURE)
+                # 4️⃣ DECISION EXTRACTION (PURE LLM)
                 # =================================================
                 try:
                     decisions = extract_decisions(email)
@@ -155,8 +202,9 @@ def run_agent():
                         payload={
                             "decision": d["decision"],
                             "context": d.get("context"),
-                            "expected_outcome": d.get("expected_outcome"),
-                            "review_date": d.get("review_date"),
+                            "confidence": d.get("confidence"),
+                            "reversible": d.get("reversible"),
+                            "effective_date": d.get("effective_date"),
                             "source": "email",
                             "source_ref": email_event["event_id"],
                             "email": {
@@ -169,7 +217,7 @@ def run_agent():
                     )
 
                 # =================================================
-                # 4️⃣ MARK EMAIL AS PROCESSED (SAFE)
+                # 5️⃣ MARK EMAIL AS PROCESSED (SAFE)
                 # =================================================
                 emails_col.update_one(
                     {"_id": email_id},
@@ -189,9 +237,6 @@ def run_agent():
             except Exception as e:
                 logger.exception("❌ Failed processing email UID=%s", uid)
 
-                # -------------------------------------------------
-                # FAILURE STATE (FULL OBJECT UPDATE – SAFE)
-                # -------------------------------------------------
                 emails_col.update_one(
                     {"_id": email_id},
                     {
@@ -209,14 +254,12 @@ def run_agent():
 
         time.sleep(SHORT_SLEEP)
 
-
 # =========================================================
 # CLI ENTRY
 # =========================================================
 
 def main():
     run_agent()
-
 
 if __name__ == "__main__":
     main()

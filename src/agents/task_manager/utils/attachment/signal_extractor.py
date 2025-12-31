@@ -11,7 +11,8 @@ and avoids summaries, facts, or over-precision.
 import re
 from collections import Counter
 from typing import List, Dict
-
+from src.agents.task_manager.utils.attachment.normalizer import normalize_text
+# from src.signals.weak_signal_extractor import extract_signals_from_normalized
 
 # =========================================================
 # Configuration / Ontologies
@@ -243,6 +244,64 @@ def extract_signals_from_normalized(
 # =========================================================
 # Optional CLI test
 # =========================================================
+from pathlib import Path
+from typing import Dict, Optional
+
+
+
+
+def extract_attachment_signals(
+    attachment_path: str
+) -> Optional[Dict[str, object]]:
+    """
+    Extract weak directional signals from an attachment.
+
+    Responsibilities:
+    - Normalize document text
+    - Run weak signal extractor
+    - Return non-committal signal metadata ONLY
+    - NEVER infer tasks, decisions, or facts
+    """
+
+    path = Path(attachment_path)
+
+    if not path.exists() or not path.is_file():
+        return None
+
+    # ---------------- Normalize ----------------
+    try:
+        normalized_lines = normalize_text(str(path))
+    except Exception:
+        # Attachment unreadable → no signal
+        return None
+
+    if not normalized_lines:
+        return None
+
+    # ---------------- Weak signal extraction ----------------
+    signals = extract_signals_from_normalized(normalized_lines)
+
+    # ---------------- Signal strength heuristic ----------------
+    strength_score = (
+        len(signals["dominant_verbs"]) +
+        len(signals["section_types"]) +
+        len(signals["domains"]) +
+        len(signals["questions_implied"])
+    )
+
+    if strength_score >= 6:
+        signal_strength = "high"
+    elif strength_score >= 3:
+        signal_strength = "medium"
+    else:
+        signal_strength = "low"
+
+    return {
+        "filename": path.name,
+        "signals": signals,
+        "signal_strength": signal_strength,
+    }
+
 
 if __name__ == "__main__":
     sample = [

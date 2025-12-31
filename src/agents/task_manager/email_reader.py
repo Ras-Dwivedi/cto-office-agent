@@ -30,6 +30,32 @@ MAILBOX = "PRIMARY"
 BATCH_SIZE = 10
 
 # =========================================================
+# Folder Filters
+# =========================================================
+
+EXCLUDED_FOLDERS = {
+    "Drafts",
+    "Spam",
+    "Trash",
+    "Bin",
+    "Junk",
+    "Recommendations",
+    "health conference",
+    "appstores notification",
+    "Digilocker",
+    "Credit Card"
+    "Archive",
+    "hr.travel",
+}
+
+EXCLUDED_PREFIXES = (
+    "Archives.",
+    "Archive.",
+    "Trash"
+    "Trash."
+)
+
+# =========================================================
 # DB Collections
 # =========================================================
 
@@ -96,6 +122,12 @@ def fetch_new_emails():
         for folder in list_folders(server):
             logger.info("📂 Processing folder: %s", folder)
             server.select_folder(folder)
+            if folder in EXCLUDED_FOLDERS:
+                logger.info("🚫 Skipping folder (excluded): %s", folder)
+                continue
+            if any(folder.startswith(p) for p in EXCLUDED_PREFIXES):
+                logger.info("🚫 Skipping folder (prefix excluded): %s", folder)
+                continue
 
             last_uid = get_last_uid(MAILBOX, folder)
             logger.info(

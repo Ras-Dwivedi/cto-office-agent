@@ -2,6 +2,11 @@ import fitz           # PyMuPDF
 import docx
 import openpyxl
 
+if "PyMuPDF" not in (fitz.__doc__ or ""):
+    raise ImportError(
+        "Incorrect fitz module loaded. "
+        "Ensure 'pymupdf' is installed and 'fitz' is NOT installed."
+    )
 
 def normalize_text(path: str) -> list[str]:
     if path.endswith(".pdf"):

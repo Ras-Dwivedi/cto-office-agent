@@ -39,3 +39,4 @@ def store_attachment(payload: bytes) -> str:
             f.write(payload)
 
     return sha
+
