@@ -1,25 +1,44 @@
-import json
-import logging
-from datetime import datetime
+"""
+EMAIL → TASK / DECISION EXTRACTION (LLM)
 
+Responsibilities
+----------------
+- Call Ollama LLM
+- Extract candidate TASKS and DECISIONS from email text
+- Normalize and coerce LLM output into safe structured objects
+- Enrich with deterministic metadata
+- NEVER write to DB
+- NEVER generate IDs
+
+This module is PURE extraction + enrichment.
+Persistence happens elsewhere.
+"""
+
+from datetime import datetime
 import requests
 
+from src.agents.task_manager.utils.llm_parser import (
+     get_decision_from_llm_str, get_task_from_llm_str,
+)
 from src.agents.task_manager.utils.project_resolver import resolve_project_id
 from src.agents.task_manager.utils.verb_resolver import resolve_task_verb
 from src.config.config import OLLAMA_URL, OLLAMA_MODEL
+from src.agents.utils.logger import logger
 
-logger = logging.getLogger(__name__)
 
+# =========================================================
+# TASK EXTRACTION
+# =========================================================
 
 def extract_tasks(email):
     """
-    Extract actionable tasks from an email using Ollama.
+    Extract actionable TASKS from an email using Ollama.
 
-    Responsibilities:
-    - Call LLM for task extraction ONLY
-    - Enrich tasks with deterministic metadata
-    - NEVER generate task_id
-    - NEVER write to DB
+    Guarantees:
+    - Returns a list of SAFE task dicts
+    - Empty list if no tasks
+    - No DB writes
+    - No task_id generation
     """
 
     prompt = f"""
@@ -56,9 +75,9 @@ Return STRICT JSON array only:
 ]
 
 Email:
-Subject: {email.get('subject')}
+Subject: {email.get("subject")}
 Body:
-{email.get('body')}
+{email.get("body")}
 """
 
     # ---------------- LLM call ----------------
@@ -68,12 +87,12 @@ Body:
             json={
                 "model": OLLAMA_MODEL,
                 "prompt": prompt,
-                "stream": False
+                "stream": False,
             },
-            timeout=60
+            timeout=60,
         )
     except Exception:
-        logger.exception("Failed to call Ollama API")
+        logger.exception("Failed to call Ollama API for task extraction")
         raise RuntimeError("Ollama API call failed")
 
     if response.status_code != 200:
@@ -88,7 +107,6 @@ Body:
 
     # ---------------- Response parsing ----------------
     if "error" in data:
-        logger.error("Ollama error: %s", data["error"])
         raise RuntimeError(data["error"])
 
     if "response" in data:
@@ -96,23 +114,23 @@ Body:
     elif "message" in data and "content" in data["message"]:
         text = data["message"]["content"]
     else:
-        logger.error("Unexpected Ollama response format: %s", data)
         raise RuntimeError("Unexpected Ollama response format")
 
     if not text or "EMPTY" in text:
         return []
 
+    # ---------------- Normalize + Coerce ----------------
     try:
-        tasks = json.loads(text)
+        tasks = get_task_from_llm_str(text)
     except Exception:
         logger.error("Failed to parse task JSON from LLM output:\n%s", text)
         raise RuntimeError("Invalid task JSON")
 
     now = datetime.utcnow().isoformat()
 
-    # ---------------- Enrich tasks (NO IDENTITY) ----------------
+    # ---------------- Deterministic enrichment ----------------
     for task in tasks:
-        # ---- Safety: never trust LLM for identity ----
+        # ---- Safety ----
         task.pop("task_id", None)
 
         # ---- Email provenance ----
@@ -121,11 +139,11 @@ Body:
         task["email_from"] = email.get("from")
         task["source"] = "email"
 
-        # ---- Deterministic enrichment ----
+        # ---- Deterministic resolution ----
         task["project_id"] = resolve_project_id(task)
         task["task_verb"] = resolve_task_verb(task)
 
-        # ---- Timestamps (non-identity) ----
+        # ---- Timestamps ----
         task.setdefault("created_at", now)
         task["last_activity_at"] = now
         task.setdefault("status", "OPEN")
@@ -133,20 +151,25 @@ Body:
     logger.info(
         "Extracted %d task(s) from email UID=%s",
         len(tasks),
-        email.get("uid")
+        email.get("uid"),
     )
 
     return tasks
+
+
+# =========================================================
+# DECISION EXTRACTION
+# =========================================================
 
 def extract_decisions(email):
     """
     Extract DECISIONS from an email using Ollama.
 
-    Responsibilities:
-    - Detect explicit or implicit decisions
-    - Return structured decision facts
-    - NEVER generate decision_id
-    - NEVER write to DB
+    Guarantees:
+    - Returns SAFE decision objects only
+    - Drops placeholders ("no decision", "not applicable")
+    - No DB writes
+    - No decision_id generation
     """
 
     prompt = f"""
@@ -184,9 +207,9 @@ Return STRICT JSON array only:
 ]
 
 Email:
-Subject: {email.get('subject')}
+Subject: {email.get("subject")}
 Body:
-{email.get('body')}
+{email.get("body")}
 """
 
     # ---------------- LLM call ----------------
@@ -196,9 +219,9 @@ Body:
             json={
                 "model": OLLAMA_MODEL,
                 "prompt": prompt,
-                "stream": False
+                "stream": False,
             },
-            timeout=60
+            timeout=60,
         )
     except Exception:
         logger.exception("Failed to call Ollama API for decision extraction")
@@ -216,7 +239,6 @@ Body:
 
     # ---------------- Response parsing ----------------
     if "error" in data:
-        logger.error("Ollama error: %s", data["error"])
         raise RuntimeError(data["error"])
 
     if "response" in data:
@@ -224,23 +246,23 @@ Body:
     elif "message" in data and "content" in data["message"]:
         text = data["message"]["content"]
     else:
-        logger.error("Unexpected Ollama response format: %s", data)
         raise RuntimeError("Unexpected Ollama response format")
 
     if not text or "EMPTY" in text:
         return []
 
+    # ---------------- Normalize + Coerce ----------------
     try:
-        decisions = json.loads(text)
+        decisions = get_decision_from_llm_str(text)
     except Exception:
-        logger.error("Failed to parse decision JSON from LLM output:\n%s", text)
+        logger.exception("Failed to parse decision JSON from LLM output:\n%s", text)
         raise RuntimeError("Invalid decision JSON")
 
     now = datetime.utcnow().isoformat()
 
-    # ---------------- Enrich decisions (NO IDENTITY) ----------------
+    # ---------------- Deterministic enrichment ----------------
     for d in decisions:
-        # ---- Safety: never trust LLM for identity ----
+        # ---- Safety ----
         d.pop("decision_id", None)
 
         # ---- Email provenance ----
@@ -256,7 +278,7 @@ Body:
     logger.info(
         "Extracted %d decision(s) from email UID=%s",
         len(decisions),
-        email.get("uid")
+        email.get("uid"),
     )
 
     return decisions

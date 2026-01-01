@@ -1,4 +1,5 @@
 import logging
+import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -7,10 +8,12 @@ from src.agents.task_manager.email_extractor import (
     extract_tasks,
     extract_decisions,
 )
+from src.agents.task_manager.utils.task_engine import task_engine
 from src.agents.task_manager.utils.event_engine import event_engine
 from src.agents.task_manager.utils.attachment.signal_extractor import extract_attachment_signals
 from src.config.config import EMAIL_POLL_SECONDS
 from src.db import get_collection
+from src.agents.task_manager.utils.decision_engine import record_decision
 
 # =========================================================
 # LOGGING
@@ -154,6 +157,7 @@ def run_agent():
                 # =================================================
                 try:
                     tasks = extract_tasks(email)
+
                 except Exception as e:
                     logger.warning(
                         "⚠️ Task extraction failed UID=%s: %s", uid, e
@@ -161,7 +165,7 @@ def run_agent():
                     tasks = []
 
                 for t in tasks:
-                    event_engine.register_event(
+                    event = event_engine.register_event(
                         event_type="task.candidate_detected",
                         occurred_at=received_at,
                         payload={
@@ -183,6 +187,30 @@ def run_agent():
                             "extractor_version": PROCESSOR_VERSION,
                         },
                     )
+                    task = task_engine.create_task(
+                        title=t["title"],
+                        source="email",
+                        source_event_id=event["event_id"],
+                        occurred_at=received_at,
+                        signals={
+                            "institutional": t.get("institutional"),
+                            "delegatable": t.get("delegatable"),
+                            "blocks_others": t.get("blocks_others"),
+                            "external_dependency": t.get("external_dependency"),
+                            "due_by": t.get("due_by"),
+                        },
+                        meta={
+                            "email_uid": uid,
+                            "email_subject": email.get("subject"),
+                            "email_from": email.get("from"),
+                        },
+                    )
+                    logger.info(
+                        "📝 Task created %s from email UID=%s",
+                        task["task_id"],
+                        uid,
+                    )
+
 
                 # =================================================
                 # 4️⃣ DECISION EXTRACTION (PURE LLM)
@@ -190,13 +218,15 @@ def run_agent():
                 try:
                     decisions = extract_decisions(email)
                 except Exception as e:
+                    logger.exception("Decision extraction failed UID=%s", uid)
                     logger.warning(
                         "⚠️ Decision extraction failed UID=%s: %s", uid, e
                     )
                     decisions = []
+                    exit()
 
                 for d in decisions:
-                    event_engine.register_event(
+                    event = event_engine.register_event(
                         event_type="decision.detected",
                         occurred_at=received_at,
                         payload={
@@ -215,6 +245,21 @@ def run_agent():
                             "extractor_version": PROCESSOR_VERSION,
                         },
                     )
+
+                    decision_record = record_decision(
+                        event_id=event["event_id"],
+                        decision=d["decision"],
+                        occurred_at=received_at,
+                        context=d.get("context"),
+                        source="email",
+                        meta={
+                            "email_uid": uid,
+                            "confidence": d.get("confidence"),
+                            "reversible": d.get("reversible"),
+                            "effective_date": d.get("effective_date"),
+                        }
+                    )
+                    logger.info(f"decision record: {decision_record}")
 
                 # =================================================
                 # 5️⃣ MARK EMAIL AS PROCESSED (SAFE)

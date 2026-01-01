@@ -1,0 +1,12 @@
+feeds:
+  - name: "SANS ICS"
+    type: "rss"
+    url: "https://www.sans.org/blog"
+
+  - name: "Krebs on Security"
+    type: "rss"
+    url: "https://krebsonsecurity.com/feed/"
+
+  - name: "CISA Advisories"
+    type: "rss"
+    url: "https://www.cisa.gov/cybersecurity-advisories/feed"
