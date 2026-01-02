@@ -63,6 +63,8 @@ class EventEngine:
                 event_id=event_id,
                 event_type=event_type,
                 event_text=payload.get("title")
+                    or payload.get("subject") # Email
+                    or payload.get("task_text") # Pomodoro
                     or payload.get("subject")
                     or "",
                 now=occurred_at,

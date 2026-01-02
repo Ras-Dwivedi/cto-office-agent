@@ -31,7 +31,7 @@ logger = logging.getLogger("agent.email_event_agent")
 # =========================================================
 
 PROCESSOR_NAME = "email_event_agent"
-PROCESSOR_VERSION = 2  # ⬅️ bump version due to attachment signals
+PROCESSOR_VERSION = 3  # ⬅️ bump version due to attachment signals
 
 LONG_SLEEP = 2 * 60 * 60
 SHORT_SLEEP = EMAIL_POLL_SECONDS
@@ -165,32 +165,32 @@ def run_agent():
                     tasks = []
 
                 for t in tasks:
-                    event = event_engine.register_event(
-                        event_type="task.candidate_detected",
-                        occurred_at=received_at,
-                        payload={
-                            "title": t["title"],
-                            "source": "email",
-                            "source_ref": email_event["event_id"],
-                            "signals": {
-                                "institutional": t.get("institutional"),
-                                "delegatable": t.get("delegatable"),
-                                "blocks_others": t.get("blocks_others"),
-                                "external_dependency": t.get("external_dependency"),
-                                "due_by": t.get("due_by"),
-                            },
-                            "email": {
-                                "uid": uid,
-                                "subject": email.get("subject"),
-                                "from": email.get("from"),
-                            },
-                            "extractor_version": PROCESSOR_VERSION,
-                        },
-                    )
+                    # event = event_engine.register_event(
+                    #     event_type="task.candidate_detected",
+                    #     occurred_at=received_at,
+                    #     payload={
+                    #         "title": t["title"],
+                    #         "source": "email",
+                    #         "source_ref": email_event["event_id"],
+                    #         "signals": {
+                    #             "institutional": t.get("institutional"),
+                    #             "delegatable": t.get("delegatable"),
+                    #             "blocks_others": t.get("blocks_others"),
+                    #             "external_dependency": t.get("external_dependency"),
+                    #             "due_by": t.get("due_by"),
+                    #         },
+                    #         "email": {
+                    #             "uid": uid,
+                    #             "subject": email.get("subject"),
+                    #             "from": email.get("from"),
+                    #         },
+                    #         "extractor_version": PROCESSOR_VERSION,
+                    #     },
+                    # )
                     task = task_engine.create_task(
                         title=t["title"],
                         source="email",
-                        source_event_id=event["event_id"],
+                        source_event_id=email_event["event_id"],
                         occurred_at=received_at,
                         signals={
                             "institutional": t.get("institutional"),
@@ -226,28 +226,28 @@ def run_agent():
                     exit()
 
                 for d in decisions:
-                    event = event_engine.register_event(
-                        event_type="decision.detected",
-                        occurred_at=received_at,
-                        payload={
-                            "decision": d["decision"],
-                            "context": d.get("context"),
-                            "confidence": d.get("confidence"),
-                            "reversible": d.get("reversible"),
-                            "effective_date": d.get("effective_date"),
-                            "source": "email",
-                            "source_ref": email_event["event_id"],
-                            "email": {
-                                "uid": uid,
-                                "subject": email.get("subject"),
-                                "from": email.get("from"),
-                            },
-                            "extractor_version": PROCESSOR_VERSION,
-                        },
-                    )
+                    # event = event_engine.register_event(
+                    #     event_type="decision.detected",
+                    #     occurred_at=received_at,
+                    #     payload={
+                    #         "decision": d["decision"],
+                    #         "context": d.get("context"),
+                    #         "confidence": d.get("confidence"),
+                    #         "reversible": d.get("reversible"),
+                    #         "effective_date": d.get("effective_date"),
+                    #         "source": "email",
+                    #         "source_ref": email_event["event_id"],
+                    #         "email": {
+                    #             "uid": uid,
+                    #             "subject": email.get("subject"),
+                    #             "from": email.get("from"),
+                    #         },
+                    #         "extractor_version": PROCESSOR_VERSION,
+                    #     },
+                    # )
 
                     decision_record = record_decision(
-                        event_id=event["event_id"],
+                        event_id=email_event["event_id"],
                         decision=d["decision"],
                         occurred_at=received_at,
                         context=d.get("context"),
