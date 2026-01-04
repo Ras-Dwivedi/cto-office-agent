@@ -146,6 +146,7 @@ from src.config.config import EMAIL_PROCESSOR_VERSION
 events_col = get_collection("events")
 cf_col = get_collection("context_fingerprints")
 edges_col = get_collection("event_cf_edges")
+decisions_col = get_collection("decisions")
 
 
 tasks_col = get_collection("tasks")
@@ -377,6 +378,117 @@ def rebuild_work():
         )
 
 
+def rebuild_decisions():
+    for decision in decisions_col.find({}):
+        occurred_at = decision["occurred_at"]
+        source = decision.get("source")
+
+        existing_event_id = decision.get("event_id")
+        if existing_event_id:
+            existing_event = events_col.find_one({"event_id": existing_event_id})
+            if existing_event:
+                logger.info(
+                    "decision event already exists with event id: %s",
+                    existing_event_id,
+                )
+                continue
+
+        # =================================================
+        # EMAIL-SOURCED DECISION
+        # =================================================
+        if source == "email":
+            meta = decision.get("meta", {})
+            email_uid = meta.get("email_uid")
+
+            if email_uid is None:
+                logger.warning(
+                    "email decision %s missing email_uid, skipping",
+                    decision["decision_id"],
+                )
+                continue
+
+            email = emails_col.find_one({"uid": email_uid})
+            if not email:
+                logger.warning(
+                    "raw email not found for uid %s (decision %s)",
+                    email_uid,
+                    decision["decision_id"],
+                )
+                continue
+
+            email_id = email["_id"]
+            uid = email.get("uid")
+            received_at = email.get("received_at") or occurred_at
+
+            # ---- canonical email.received event ----
+            event = event_engine.register_event(
+                event_type="email.received",
+                occurred_at=received_at,
+                payload={
+                    "email_uid": uid,
+                    "folder": email.get("folder"),
+                    "subject": email.get("subject"),
+                    "from": email.get("from"),
+                    "to": email.get("to"),
+                    "raw_email_ref": email_id,
+                    "ingestion_version": EMAIL_PROCESSOR_VERSION,
+                },
+            )
+
+            logger.info(
+                "📨 email.received → %s (UID=%s) [decision]",
+                event["event_id"],
+                uid,
+            )
+
+        # =================================================
+        # NON-EMAIL DECISION (future-safe)
+        # =================================================
+        else:
+            event = event_engine.register_event(
+                event_type="decision.made",
+                occurred_at=occurred_at(),
+                payload={"decision_id": decision.get("decision_id"),
+                         "mode": decision.get("mode"),
+                         "source": decision.get("source"),
+                         "decision": decision.get("decision"),
+                         "expected_outcome": decision.get("expected_outcome"),
+                         "review_date": decision.get("review_date"),
+                         }
+            )
+            event = event_engine.register_event(
+                event_type="decision",
+                occurred_at=occurred_at,
+                payload={
+                    "decision_id": decision["decision_id"],
+                    "decision": decision["decision"],
+                    "context": decision.get("context"),
+                    "assumptions": decision.get("assumptions"),
+                    "expected_outcome": decision.get("expected_outcome"),
+                    "review_date": decision.get("review_date"),
+                    "source": source,
+                },
+            )
+
+        # ---------------------------------------------
+        # Update decision document
+        # ---------------------------------------------
+        decisions_col.update_one(
+            {"decision_id": decision["decision_id"]},
+            {
+                "$set": {
+                    "event_id": event["event_id"],
+                    "meta.rebuilt": True,
+                }
+            },
+        )
+
+        logger.info(
+            "rebuilt decision %s → event %s",
+            decision["decision_id"],
+            event["event_id"],
+        )
+
 
 # ---------------------------------------------------------
 # CLI Entry
@@ -384,5 +496,6 @@ def rebuild_work():
 
 if __name__ == "__main__":
     # rebuild_event()
-    rebuild_tasks()
+    # rebuild_tasks()
     # rebuild_work()
+    rebuild_decisions()

@@ -7,6 +7,7 @@ import uuid
 from datetime import datetime, timezone
 
 from src.agents.task_manager.utils.cf_engine import process_event
+from src.agents.task_manager.utils.event_engine import event_engine
 from src.db import get_collection
 
 logger = logging.getLogger("record_decision")
@@ -72,7 +73,7 @@ def context_fingerprint(*parts):
 # Main
 # =========================================================
 
-def main():
+def record_decision():
     long_mode = "--long" in sys.argv
     fields = LONG_FIELDS if long_mode else QUICK_FIELDS
     mode = "LONG" if long_mode else "QUICK"
@@ -112,14 +113,37 @@ def main():
         if value:
             doc[normalize(field)] = value
 
+    # Create decision event that would automatically generate CF
+
+    event = event_engine.register_event(
+        event_type="decision.made",
+        occurred_at=utc_now(),
+        payload={  "decision_id": decision_id,
+                   "mode": mode,
+                   "source": "decision-cli",
+                   "decision": doc["decision"],
+                   "expected_outcome": doc["expected_outcome"],
+                   "review_date": doc["review_date"],
+                   }
+    )
+    event_id = event.get("event_id")
+    if event_id:
+        doc["event_id"] = event.get("event_id")
+        decisions_col.insert_one(doc)
+    else:
+        raise Exception("unble to generate event id")
+
+    #update event if in the decisions
+
+
     # -----------------------------------------------------
     # Local fingerprint (NOT CF)
     # -----------------------------------------------------
-    doc["context_fingerprint"] = context_fingerprint(
-        doc.get("decision"),
-        doc.get("context"),
-        doc.get("assumptions"),
-    )
+    # doc["context_fingerprint"] = context_fingerprint(
+    #     doc.get("decision"),
+    #     doc.get("context"),
+    #     doc.get("assumptions"),
+    # )
 
     # -----------------------------------------------------
     # Persist decision (immutable)
@@ -129,22 +153,6 @@ def main():
     # -----------------------------------------------------
     # Emit DECISION EVENT → CF ENGINE
     # -----------------------------------------------------
-    event_title = doc.get("decision") or "Decision recorded"
-
-    try:
-        process_event(
-            event_id=decision_id,
-            event_type="decision",
-            event_text=" ".join(
-                filter(None, [
-                    doc.get("decision"),
-                    doc.get("context"),
-                ])
-            ),
-            now=now,
-        )
-    except Exception:
-        logger.exception("CF inference failed for decision")
 
     # -----------------------------------------------------
     # Feedback
@@ -152,12 +160,10 @@ def main():
     print("\n✅ Decision recorded successfully")
     print(f"🆔 Decision ID: {decision_id}")
 
-    if doc["context_fingerprint"]:
-        print(f"🔑 Local context fingerprint: {doc['context_fingerprint']}")
-
-    print("🧠 Context inference delegated to CF engine")
 
 # =========================================================
+def main():
+    record_decision()
 
 if __name__ == "__main__":
     main()
