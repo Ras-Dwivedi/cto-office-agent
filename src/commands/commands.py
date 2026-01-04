@@ -1,12 +1,12 @@
 from src.agents.judgement.morning_brief import morning_judgement_brief
-from src.agents.task_manager.agent import main as email_task_creator
+from src.agents.task_manager.event_handler.email_handler import main as email_task_creator
 from src.agents.task_manager.utils.email_downloader import main as email_downloader
 from src.agents.task_manager.generate_markdown import main as generate_markdown
-from src.agents.task_manager.pomodoro import main as pomodoro_main
+from src.agents.task_manager.event_handler.pomodoro_handler import main as pomodoro_main
 from src.agents.task_manager.priority_view import get_priority_task
 from src.agents.task_manager.record_decisions import main as record_decision
 # Manual event ingestion
-from src.agents.task_manager.utils.interrupt_handler import main as manual_event_ingest
+from src.agents.task_manager.event_handler.interrupt_handler import main as manual_event_ingest
 from src.cli.open_email import open_email
 
 COMMAND_ROUTES = {
