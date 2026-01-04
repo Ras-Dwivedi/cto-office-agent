@@ -4,9 +4,10 @@ from datetime import datetime, timezone, timedelta
 from src.agents.task_manager.utils.event_engine import event_engine
 from src.agents.task_manager.utils.task_engine import task_engine
 from src.agents.task_manager.utils.work_engine import work_engine
-
+from src.db import get_collection
 logger = logging.getLogger("manual_event_ingestion")
 
+interrupt_col = get_collection("interrupt")
 
 # =========================================================
 # Utilities
@@ -94,6 +95,7 @@ def main(source: str | None = None):
                 "unplanned": True,
             },
         )
+        interrupt_col.insert_one(event)
     except Exception:
         logger.exception("❌ Failed to register interrupt event")
         return
