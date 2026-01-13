@@ -7,7 +7,7 @@ from time import sleep
 import pyzmail
 from imapclient import IMAPClient
 
-from src.config.config import IMAP_HOST, EMAIL_USER, EMAIL_PASS
+from src.config.config import IMAP_HOST, EMAIL_USER, EMAIL_PASS, EXCLUDED_FOLDERS,EXCLUDED_PREFIXES
 from src.db import get_collection
 from src.agents.task_manager.utils.attachment.artifact_storage import store_attachment
 
@@ -33,27 +33,6 @@ BATCH_SIZE = 10
 # Folder Filters
 # =========================================================
 
-EXCLUDED_FOLDERS = {
-    "Drafts",
-    "Spam",
-    "Trash",
-    "Bin",
-    "Junk",
-    "Recommendations",
-    "health conference",
-    "appstores notification",
-    "Digilocker",
-    "Credit Card"
-    "Archive",
-    "hr.travel",
-}
-
-EXCLUDED_PREFIXES = (
-    "Archives.",
-    "Archive.",
-    "Trash"
-    "Trash."
-)
 
 # =========================================================
 # DB Collections
@@ -121,7 +100,8 @@ def fetch_new_emails():
 
         for folder in list_folders(server):
             logger.info("📂 Processing folder: %s", folder)
-            server.select_folder(folder)
+            # server.select_folder(folder)
+            server.select_folder(folder, readonly=True)
             if folder in EXCLUDED_FOLDERS:
                 logger.info("🚫 Skipping folder (excluded): %s", folder)
                 continue
@@ -152,11 +132,14 @@ def fetch_new_emails():
                 batch[-1],
             )
 
-            fetch_data = server.fetch(batch, ["RFC822", "INTERNALDATE"])
+            # fetch_data = server.fetch(batch, ["RFC822", "INTERNALDATE"])
+            fetch_data = server.fetch(batch, ["BODY.PEEK[]", "INTERNALDATE"])
             max_uid_processed = last_uid
 
             for uid in batch:
-                raw = fetch_data[uid][b"RFC822"]
+                # raw = fetch_data[uid][b"RFC822"]
+                raw = fetch_data[uid][b"BODY[]"]
+
                 internal_date = fetch_data[uid].get(b"INTERNALDATE")
 
                 msg = pyzmail.PyzMessage.factory(raw)
