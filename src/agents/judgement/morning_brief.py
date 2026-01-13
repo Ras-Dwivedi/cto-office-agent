@@ -1,6 +1,8 @@
-from datetime import datetime
+from datetime import datetime, timezone
+
 from dateutil.parser import parse
 
+from src.agents.utils.logger import logger
 from src.db import get_collection
 
 tasks_col = get_collection("tasks")
@@ -20,31 +22,100 @@ def _days_to_due(task):
     due_by = _signals(task).get("due_by")
     if not due_by:
         return None
+
     try:
-        return (parse(due_by) - datetime.utcnow()).days
+        if isinstance(due_by, datetime):
+            due = due_by
+        elif isinstance(due_by, str):
+            due = parse(due_by)
+        else:
+            return None
+
+        # Timezone-safe comparison
+        if due.tzinfo is not None:
+            now = datetime.now(timezone.utc)
+        else:
+            now = datetime.utcnow()
+
+        return (due - now).days
+
     except Exception:
+        logger.error("Failed to compute days_to_due", exc_info=True)
+        logger.error(due_by)
         return None
 
 
 def _task_age_days(task):
     try:
-        created = parse(task["created_at"])
-        return (datetime.utcnow() - created).days
-    except Exception:
-        return None
+        created_at = task.get("created_at")
 
+        if created_at is None:
+            return None
+
+        # Case 1: MongoDB / PyMongo datetime
+        if isinstance(created_at, datetime):
+            created = created_at
+
+        # Case 2: string (legacy / external)
+        elif isinstance(created_at, str):
+            created = parse(created_at)
+
+        else:
+            raise TypeError(f"Unsupported type for created_at: {type(created_at)}")
+
+        # Normalize timezone
+        if created.tzinfo is not None:
+            now = datetime.now(timezone.utc)
+        else:
+            now = datetime.utcnow()
+
+        return (now - created).days
+
+    except Exception:
+        logger.error("Failed to parse task creation date", exc_info=True)
+        logger.error(task.get("created_at"))
+        return None
 
 def _task_context(task):
     """
     Return compact source-aware context line.
     """
     source = task.get("source", "unknown")
-    try:
-        created = parse(task["created_at"]).strftime("%d %b %Y")
-    except Exception:
-        created = "unknown date"
 
-    return f"📌 Source: {source} | Created: {created}"
+    created_at = task.get("created_at")
+    created_str = "unknown date"
+
+    try:
+        if isinstance(created_at, datetime):
+            created = created_at
+        elif isinstance(created_at, str):
+            created = parse(created_at)
+        else:
+            created = None
+
+        if created:
+            created_str = created.strftime("%d %b %Y")
+
+    except Exception:
+        logger.error("Failed to format task creation date", exc_info=True)
+        logger.error(created_at)
+
+    return f"📌 Source: {source} | Created: {created_str}"
+
+def _days_since_activity(task):
+    last = task.get("last_activity_at")
+    if not last:
+        return None
+
+    if isinstance(last, datetime):
+        ref = last
+    elif isinstance(last, str):
+        ref = parse(last)
+    else:
+        return None
+
+    now = datetime.utcnow()
+    return (now - ref).days
 
 
 def get_open_tasks():
@@ -101,21 +172,42 @@ def score_personal_task(task):
     score = 0
     signals = _signals(task)
 
+    # 1. Institutional risk
     if signals.get("institutional"):
-        score += 4
+        score += 60
 
+    # 2. Blocking others
     if signals.get("blocks_others"):
-        score += 3
+        score += 50
 
+    # 3. Deadline pressure
     days_left = _days_to_due(task)
     if days_left is not None:
-        if days_left <= 1:
-            score += 4
+        if days_left <= 0:
+            score += 100
+        elif days_left <= 1:
+            score += 80
         elif days_left <= 3:
-            score += 2
+            score += 50
+        elif days_left <= 7:
+            score += 25
+
+    # 4. Reactivation signal (NOT age)
+    inactive_days = _days_since_activity(task)
+    if inactive_days is not None:
+        if inactive_days <= 1:
+            score += 30      # just resurfaced
+        elif inactive_days <= 3:
+            score += 20
+        elif inactive_days <= 7:
+            score += 15
+        # elif inactive_days <= 30:
+        #     score += 10
+        else:
+            score = 0
+        # >7 days → no boost
 
     return score
-
 
 def generate_reason(task, category):
     signals = _signals(task)
@@ -136,6 +228,7 @@ def generate_reason(task, category):
         reasons.append("urgent deadline")
 
     return ", ".join(reasons) if reasons else "requires direct attention"
+
 
 
 # -------------------------
