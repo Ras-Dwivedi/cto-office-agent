@@ -72,7 +72,6 @@ def context_fingerprint(*parts):
 # =========================================================
 # Main
 # =========================================================
-
 def record_decision():
     long_mode = "--long" in sys.argv
     fields = LONG_FIELDS if long_mode else QUICK_FIELDS
@@ -84,7 +83,7 @@ def record_decision():
     print(f"\n📝 Recording {mode} decision\n")
 
     # -----------------------------------------------------
-    # Canonical decision document (IMMUTABLE FACT)
+    # Canonical decision document
     # -----------------------------------------------------
     doc = {
         "decision_id": decision_id,
@@ -93,7 +92,6 @@ def record_decision():
         "source": "decision-cli",
         "version": 1,
 
-        # user content
         "decision": None,
         "context": None,
         "assumptions": None,
@@ -101,7 +99,6 @@ def record_decision():
         "review_date": None,
         "what_i_learned": None,
 
-        # derived (local only)
         "context_fingerprint": None,
     }
 
@@ -113,53 +110,50 @@ def record_decision():
         if value:
             doc[normalize(field)] = value
 
-    # Create decision event that would automatically generate CF
-
-    event = event_engine.register_event(
-        event_type="decision.made",
-        occurred_at=utc_now(),
-        payload={  "decision_id": decision_id,
-                   "mode": mode,
-                   "source": "decision-cli",
-                   "decision": doc["decision"],
-                   "expected_outcome": doc["expected_outcome"],
-                   "review_date": doc["review_date"],
-                   }
-    )
-    event_id = event.get("event_id")
-    if event_id:
-        doc["event_id"] = event.get("event_id")
-        decisions_col.insert_one(doc)
-    else:
-        raise Exception("unble to generate event id")
-
-    #update event if in the decisions
-
+    # -----------------------------------------------------
+    # HARD VALIDATION
+    # -----------------------------------------------------
+    if not doc["decision"]:
+        raise ValueError("Decision text is mandatory")
 
     # -----------------------------------------------------
-    # Local fingerprint (NOT CF)
-    # -----------------------------------------------------
-    # doc["context_fingerprint"] = context_fingerprint(
-    #     doc.get("decision"),
-    #     doc.get("context"),
-    #     doc.get("assumptions"),
-    # )
-
-    # -----------------------------------------------------
-    # Persist decision (immutable)
+    # Persist decision ONCE
     # -----------------------------------------------------
     decisions_col.insert_one(doc)
 
     # -----------------------------------------------------
-    # Emit DECISION EVENT → CF ENGINE
+    # Emit decision event (CF engine downstream)
     # -----------------------------------------------------
+    event = event_engine.register_event(
+        event_type="decision.made",
+        occurred_at=utc_now(),
+        payload={
+            "decision_id": decision_id,
+            "mode": mode,
+            "source": "decision-cli",
+            "decision": doc["decision"],
+            "expected_outcome": doc["expected_outcome"],
+            "review_date": doc["review_date"],
+        }
+    )
+
+    event_id = event.get("event_id")
+    if not event_id:
+        raise RuntimeError("Unable to generate event id")
+
+    # -----------------------------------------------------
+    # Update decision with event reference
+    # -----------------------------------------------------
+    decisions_col.update_one(
+        {"decision_id": decision_id},
+        {"$set": {"event_id": event_id}}
+    )
 
     # -----------------------------------------------------
     # Feedback
     # -----------------------------------------------------
     print("\n✅ Decision recorded successfully")
     print(f"🆔 Decision ID: {decision_id}")
-
 
 # =========================================================
 def main():

@@ -12,7 +12,7 @@ from src.config.config import EMAIL_POLL_SECONDS
 from src.db import get_collection
 from src.agents.task_manager.utils.decision_engine import record_decision
 from src.agents.utils.logger import logger
-from src.config.config import EMAIL_PROCESSOR_VERSION
+from src.config.config import EMAIL_PROCESSOR_VERSION,EXCLUDED_FOLDERS,EXCLUDED_PREFIXES, CUTOFF_DATE
 
 
 
@@ -30,9 +30,27 @@ SHORT_SLEEP = EMAIL_POLL_SECONDS
 BATCH_LIMIT = 20
 
 emails_col = get_collection("raw_emails")
+raw_emails_syn_col = get_collection("email_sync_state")
 # =========================================================
 # CONSTANTS
 # =========================================================
+
+def get_all_folder_list():
+    """
+    Return the list of all folders known to the email sync state.
+
+    Source of truth:
+    - email_sync_state collection
+    - One document per folder
+
+    Returns:
+        List[str]: folder names
+    """
+    folders = raw_emails_syn_col.distinct("folder")
+    folders = [f for f in folders if f]  # defensive cleanup
+    folders.sort()
+    return folders
+
 def get_folder_state(folder: str):
     return state_col.find_one({
         "processor": PROCESSOR_NAME,
@@ -42,7 +60,39 @@ def get_folder_state(folder: str):
     })
 
 
-def update_folder_state(folder: str, email: dict, status="running"):
+def update_folder_state(
+    folder: str,
+    *,
+    cursor: dict,
+    status: str = "idle",
+):
+    """
+    Persist folder-level cursor state for email ingestion.
+
+    Cursor invariants:
+    ------------------
+    - Cursor is monotonic
+    - Cursor is advanced ONLY after successful processing
+    - Cursor uniquely identifies position using (received_at, _id)
+
+    Parameters
+    ----------
+    folder : str
+        Email folder name (e.g., INBOX)
+
+    cursor : dict
+        {
+            "received_at": datetime,
+            "_id": ObjectId
+        }
+
+    status : str
+        Processor status (idle | running | failed)
+    """
+
+    assert "received_at" in cursor, "cursor.received_at required"
+    assert "uid" in cursor, "cursor.uid required"
+
     state_col.update_one(
         {
             "processor": PROCESSOR_NAME,
@@ -59,9 +109,8 @@ def update_folder_state(folder: str, email: dict, status="running"):
                     "folder": folder,
                 },
                 "cursor": {
-                    "received_at": email.get("received_at"),
-                    "email_uid": email.get("uid"),
-                    "email_id": email["_id"],
+                    "received_at": cursor["received_at"],
+                    "uid": cursor["uid"],
                 },
                 "status": status,
                 "updated_at": utc_now(),
@@ -273,63 +322,124 @@ def utc_now():
 # =========================================================
 # AGENT LOOP
 # =========================================================
-folders = emails_col.distinct("folder")
+folders = get_all_folder_list()
 
 def run_agent():
     logger.info("📥 Email Event Agent started (raw_emails → events)")
 
-    while True:
-        # -------------------------------------------------
-        # Fetch unprocessed raw emails
-        # -------------------------------------------------
-        for folder in folders:
-            state = get_folder_state(folder)
-            last_received_at = (
-                state["cursor"]["received_at"]
-                if state and state.get("cursor")
-                else None
-            )
+    for folder in folders:
+        if folder in EXCLUDED_FOLDERS:
+            logger.info("🚫 Skipping folder (excluded): %s", folder)
+            continue
+        if any(folder.startswith(p) for p in EXCLUDED_PREFIXES):
+            logger.info("🚫 Skipping folder (prefix excluded): %s", folder)
+            continue
 
-            query = {"folder": folder}
-            if last_received_at:
-                query["received_at"] = {"$gt": last_received_at}
+        logger.info("📂 Processing folder %s", folder)
+
+        while True:
+            state = get_folder_state(folder) or {}
+            cursor = state.get("cursor", {})
+
+            last_received_at = cursor.get("received_at")
+            last_uid = cursor.get("uid")
+
+            # -------------------------------------------------
+            # Base query (cutoff + skip failed)
+            # -------------------------------------------------
+            query = {
+                "folder": folder,
+                "received_at": {"$gte": CUTOFF_DATE},
+                "$or": [
+                    {"processing.status": {"$exists": False}},
+                    {"processing.status": {"$nin": ["failed", "dead"]}},
+                ],
+            }
+
+            # -------------------------------------------------
+            # Monotonic cursor condition
+            # -------------------------------------------------
+            if last_received_at is not None:
+                query.setdefault("$and", []).append(
+                    {
+                        "$or": [
+                            {"received_at": {"$gt": last_received_at}},
+                            {
+                                "received_at": last_received_at,
+                                "uid": {"$gt": last_uid},
+                            },
+                        ]
+                    }
+                )
 
             emails = list(
                 emails_col.find(query)
-                .sort("received_at", 1)
+                .sort([("received_at", 1), ("uid", 1)])
                 .limit(BATCH_LIMIT)
             )
 
-            while emails:
-            # if not emails:
-            #     logger.info("📭 No pending emails. Sleeping.")
-            #     time.sleep(LONG_SLEEP)
-            #     continue
+            if not emails:
+                logger.info("✔ Folder %s exhausted", folder)
+                break
 
-                logger.info("Processing %d raw email(s)", len(emails))
+            logger.info(
+                "Processing %d email(s) in folder %s",
+                len(emails),
+                folder,
+            )
 
-                for email in emails:
+            for email in emails:
+                uid = email["uid"]
+
+                try:
                     process_email(email)
-                    update_folder_state(folder, email, status="running")
 
-                time.sleep(SHORT_SLEEP)
-                emails = list(
-                    emails_col.find(query)
-                    .sort("received_at", 1)
-                    .limit(BATCH_LIMIT)
-                )
-            logger.info(f"Processed folder {folder}")
-        logger.info("📭 No pending emails. Sleeping.")
-        time.sleep(LONG_SLEEP)
+                    update_folder_state(
+                        folder,
+                        cursor={
+                            "received_at": email["received_at"],
+                            "uid": uid,
+                        },
+                        status="idle",
+                    )
 
+                except Exception as e:
+                    logger.exception(
+                        "❌ Failed processing email uid=%s folder=%s",
+                        uid,
+                        folder,
+                    )
 
+                    emails_col.update_one(
+                        {"folder": folder, "uid": uid},
+                        {
+                            "$set": {
+                                "processing": {
+                                    "status": "failed",
+                                    "error": str(e),
+                                    "failed_at": utc_now(),
+                                }
+                            }
+                        },
+                    )
 
+                    # 🚨 advance cursor EVEN on failure
+                    update_folder_state(
+                        folder,
+                        cursor={
+                            "received_at": email["received_at"],
+                            "uid": uid,
+                        },
+                        status="error",
+                    )
+
+            time.sleep(SHORT_SLEEP)
 # =========================================================
 # CLI ENTRY
 # =========================================================
 
 def main():
     run_agent()
-
+    # print(get_all_folder_list())
 if __name__ == "__main__":
     main()

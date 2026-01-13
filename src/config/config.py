@@ -1,4 +1,5 @@
 import os
+from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 
@@ -20,9 +21,35 @@ MONGO_HOST = os.getenv("MONGO_HOST", "localhost")
 MONGO_PORT = os.getenv("MONGO_PORT", "27017")
 DB_NAME = os.getenv("DB_NAME")
 
-EMAIL_POLL_SECONDS = int(os.getenv("EMAIL_POLL_SECONDS", 60))
+EMAIL_POLL_SECONDS = 120
 EMAIL_SLEEP_TIME__IN_HOURS = 2
 EMAIL_PROCESSING_BATCH_SIZE = 10
 POMODORO_MINUTES = 25
 MAILBOX= "PRIMARY"
 EMAIL_PROCESSOR_VERSION=3
+EXCLUDED_FOLDERS = {
+    "Drafts",
+    "Spam",
+    "Trash",
+    "Bin",
+    "Junk",
+    "Recommendations",
+    "health conference",
+    "appstores notification",
+    "Digilocker",
+    "Credit Card"
+    "Archive",
+    "hr.travel",
+    "hr.leaves",
+    "hr.keka",
+    "hr.misc HR",
+    "Credit Card"
+}
+
+EXCLUDED_PREFIXES = (
+    "Archives.",
+    "Archive.",
+    "Trash"
+    "Trash."
+)
+CUTOFF_DATE = datetime(2024, 1, 1, tzinfo=timezone.utc)

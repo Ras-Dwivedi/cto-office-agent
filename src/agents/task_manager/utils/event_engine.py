@@ -129,13 +129,17 @@ class EventEngine:
                 # - subject: emails
                 # - task_text: pomodoro sessions
                 event_text=(
-                    payload.get("title")
-                    or payload.get("subject")     # Email
-                    or payload.get("task_text")   # Pomodoro
-                    or ""
+                        payload.get("title")
+                        or payload.get("subject")  # Email
+                        or payload.get("task_text")  # Pomodoro
+                        or payload.get("decision")  # Decision events
+                        or ""
                 ),
+
+
                 now=occurred_at,
             )
+
         except Exception:
             # CF inference failures are logged but non-fatal.
             # Events remain valid even if meaning extraction fails.

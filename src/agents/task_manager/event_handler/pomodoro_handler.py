@@ -131,16 +131,17 @@ def main(mode: str = "interactive"):
                 "source": source,
             }
         )
-        pomodoro.insert_one(
-            event_type="work.logged",
-            occurred_at=end_time,
-            payload={
+        pomodoro.insert_one({
+            "event_type": "work.logged",
+            "occurred_at": end_time,
+            "payload": {
                 "task_id": task_id,
                 "task_text": task_text,
                 "duration_minutes": duration,
-                "source": source,
-            }
-        )
+                "source": "pomodoro",
+            },
+            "created_at": utc_now(),
+        })
 
         event_id = event.get("event_id")
         logger.info(f"logged pomodoro event {event_id}")

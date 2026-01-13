@@ -5,7 +5,7 @@ from logging import exception
 from typing import List, Dict
 
 from src.db import get_collection
-
+from src.agents.task_manager.utils.cf_facets import FACET_HINTS
 # =========================================================
 # Logging
 # =========================================================
@@ -31,40 +31,6 @@ edges_col = get_collection("event_cf_edges")
 # Semantic Facet Hints (MEANING ONLY)
 # =========================================================
 
-FACET_HINTS = {
-    "nature": {
-        "governance": ["policy", "approval", "review", "escalation", "sop"],
-        "execution": ["implement", "deploy", "fix", "configure", "build"],
-        "analysis": ["analyze", "investigate", "test", "evaluate"],
-    },
-
-    "domain": {
-        "cybersecurity": ["soc", "alert", "siem", "vapt", "incident"],
-        "blockchain": ["blockchain", "web3", "ledger", "smart contract"],
-        "ops": ["infra", "server", "network", "deployment"],
-        "business": [
-            "proposal", "bid", "rfp", "contract", "agreement",
-            "funding", "grant", "budget"
-        ],
-    },
-
-    "orientation": {
-        "technical": [
-            "code", "architecture", "design", "implementation",
-            "config", "debug"
-        ],
-        "managerial": [
-            "review", "approve", "coordinate", "delegate",
-            "follow up", "meeting"
-        ],
-    },
-
-    "action": {
-        "decision": ["decide", "approve", "finalize"],
-        "coordination": ["meeting", "sync", "call", "follow up"],
-        "delivery": ["submit", "deliver", "share", "release"],
-    },
-}
 
 # =========================================================
 # Time Utilities
@@ -251,7 +217,12 @@ def process_event(
     now: datetime | None = None,
     allow_cf_creation: bool = True
 ) -> List[dict]:
-
+    if not event_text or not event_text.strip():
+        logger.warning(
+            "Skipping CF inference for event %s: empty event_text",
+            event_id,
+        )
+        return []
     if not event_id:
         logger.error("Invalid event_id for CF processing")
         return []

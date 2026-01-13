@@ -25,3 +25,5 @@ def load_projects():
         raise ValueError("Invalid projects.yaml format")
 
     return projects
+
+
