@@ -8,6 +8,8 @@ from src.agents.task_manager.record_decisions import main as record_decision
 # Manual event ingestion
 from src.agents.task_manager.event_handler.interrupt_handler import main as manual_event_ingest
 from src.cli.open_email import open_email
+from src.agents.task_manager.cli import task_cli
+
 
 COMMAND_ROUTES = {
 
@@ -51,9 +53,14 @@ COMMAND_ROUTES = {
     },
 
     # ========= MORNING BRIEF =========
-    "morning": {
-        "handler": morning_judgement_brief,
-        "help": "Show morning judgment brief (delegate vs personal focus)"
+    # "morning": {
+    #     "handler": morning_judgement_brief,
+    #     "help": "Show morning judgment brief (delegate vs personal focus)"
+    # },
+
+    "task": {
+        "handler": task_cli,
+        "help": "Task management (list, close, drop, start, wait, help). Default = morning brief"
     },
 
     # ========= EMAIL =========

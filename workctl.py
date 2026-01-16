@@ -13,7 +13,7 @@ def main():
     )
 
     # =====================================================
-    # SHORTCUT FLAGS
+    # SHORTCUT FLAGS (highest priority)
     # =====================================================
 
     parser.add_argument(
@@ -48,12 +48,19 @@ def main():
     )
 
     # =====================================================
-    # COMMAND (fallback)
+    # COMMAND + ARGS (fallback)
     # =====================================================
+
     parser.add_argument(
         "command",
         nargs="?",
         help="Command to run"
+    )
+
+    parser.add_argument(
+        "command_args",
+        nargs=argparse.REMAINDER,
+        help="Arguments for the command"
     )
 
     args = parser.parse_args()
@@ -91,13 +98,14 @@ def main():
         return
 
     if args.command not in COMMAND_ROUTES:
-        print(f"Unknown command: {args.command}")
+        print(f"❌ Unknown command: {args.command}")
         print("\nAvailable commands:")
         for cmd, meta in COMMAND_ROUTES.items():
             print(f"  {cmd:18} {meta['help']}")
         sys.exit(1)
 
-    COMMAND_ROUTES[args.command]["handler"]()
+    # 👉 CRITICAL FIX: forward remaining args to handler
+    COMMAND_ROUTES[args.command]["handler"](*args.command_args)
 
 
 if __name__ == "__main__":

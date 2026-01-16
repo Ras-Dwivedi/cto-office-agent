@@ -42,7 +42,7 @@ EXCLUDED_FOLDERS = {
     "hr.travel",
     "hr.leaves",
     "hr.keka",
-    "hr.misc HR",
+    # "hr.misc HR",
     "Credit Card"
 }
 

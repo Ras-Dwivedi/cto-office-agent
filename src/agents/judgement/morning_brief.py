@@ -258,7 +258,8 @@ def morning_judgement_brief():
         print("  (No fresh delegatable tasks)\n")
     else:
         for t in delegate_sorted:
-            print(f"- {t['title']}")
+            print(f"- {t['title']} ")
+            print(f"  Task id {t['task_id']} | Created at {t['created_at']}")
             print(f"  Project: {t.get('project_id')} | Verb: {t.get('task_verb')}")
             print(f"  {_task_context(t)}")
             print(f"  Reason: {generate_reason(t, 'delegate')}\n")
@@ -269,6 +270,7 @@ def morning_judgement_brief():
     else:
         for i, t in enumerate(personal_top, 1):
             print(f"{i}. {t['title']}")
+            print(f"  Task id {t['task_id']} | Created at {t['created_at']}")
             print(f"   Project: {t.get('project_id')} | Verb: {t.get('task_verb')}")
             print(f"   {_task_context(t)}")
             print(f"   Reason: {generate_reason(t, 'personal')}\n")
